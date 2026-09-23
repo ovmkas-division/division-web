@@ -1186,6 +1186,7 @@ const supabase = createClient(
     { id: "knee", label: "무릎보호대", group: "보호장구" }
   ].concat(GEAR_SETS.map((g) => ({ id: "set-" + nameKey(g.en), label: g.ko, group: "세트" })));
   let farmCat = FARM_CATS[0].id;
+  let farmFilter = null; // null=부위별 탐색 모드, "전체"/"무기"/"보호장구"/"세트"=내가 등록한 것만 모아보기
 
   // 분류별 아이템. kind: 고급 / 네임드 / 특급
   const FARM_ITEMS = {
@@ -1424,9 +1425,21 @@ const supabase = createClient(
   function renderFarmList() {
     const list = $("farm-list");
     list.replaceChildren();
-    const items = (FARM_ITEMS[farmCat] || []).concat(customItems[farmCat] || []);
+    let items;
+    if (farmFilter) {
+      items = [];
+      Object.keys(customItems).forEach((catId) => {
+        const cat = FARM_CATS.find((c) => c.id === catId);
+        if (!cat) return;
+        if (farmFilter !== "전체" && cat.group !== farmFilter) return;
+        customItems[catId].forEach((it) => items.push(Object.assign({ _cat: catId, _catLabel: cat.label }, it)));
+      });
+    } else {
+      items = (FARM_ITEMS[farmCat] || []).concat(customItems[farmCat] || []);
+    }
     items.forEach((it) => {
-      const key = farmCat + "|" + it.id;
+      const cat = farmFilter ? it._cat : farmCat;
+      const key = cat + "|" + it.id;
       const li = el("li", "fitem" + (farmDone[key] ? " done" : ""));
       if (it.kind) li.dataset.kind = it.kind;
       const label = el("label", "frow");
@@ -1443,6 +1456,7 @@ const supabase = createClient(
       const name = el("div", "fname");
       name.appendChild(el("b", "", it.ko));
       if (it.en) name.appendChild(el("span", "fen", it.en));
+      if (it._catLabel) name.appendChild(el("span", "ftag", it._catLabel));
       if (it.kind) name.appendChild(el("span", "ftag " + (it.kind === "특급" ? "k-ex" : it.kind === "네임드" ? "k-nm" : it.kind === "세트" ? "k-set" : ""), it.kind));
       if (it.brand) name.appendChild(el("span", "ftag", it.brand));
       body.appendChild(name);
@@ -1478,12 +1492,26 @@ const supabase = createClient(
       li.appendChild(label);
       list.appendChild(li);
     });
-    if (!items.length) list.appendChild(el("li", "empty", "아직 등록된 아이템이 없습니다."));
+    if (!items.length) list.appendChild(el("li", "empty", farmFilter ? "등록한 항목이 없습니다." : "아직 등록된 아이템이 없습니다."));
   }
 
   function renderFarmChips() {
     const box = $("farm-chips");
     box.replaceChildren();
+
+    const filterWrap = el("div", "fgroup");
+    filterWrap.appendChild(el("span", "fgroup-label", "내 목록"));
+    const filterRow = el("div", "fchips");
+    ["전체", "무기", "보호장구", "세트"].forEach((f) => {
+      const b = el("button", "fchip", f);
+      b.type = "button";
+      b.setAttribute("aria-pressed", String(farmFilter === f));
+      b.addEventListener("click", () => { farmFilter = f; renderFarmChips(); });
+      filterRow.appendChild(b);
+    });
+    filterWrap.appendChild(filterRow);
+    box.appendChild(filterWrap);
+
     ["무기", "보호장구", "세트"].forEach((g) => {
       const wrap = el("div", "fgroup");
       wrap.appendChild(el("span", "fgroup-label", g));
@@ -1491,8 +1519,8 @@ const supabase = createClient(
       FARM_CATS.filter((c) => c.group === g).forEach((c) => {
         const b = el("button", "fchip", c.label);
         b.type = "button";
-        b.setAttribute("aria-pressed", String(c.id === farmCat));
-        b.addEventListener("click", () => { farmCat = c.id; renderFarmChips(); });
+        b.setAttribute("aria-pressed", String(!farmFilter && c.id === farmCat));
+        b.addEventListener("click", () => { farmCat = c.id; farmFilter = null; renderFarmChips(); });
         row.appendChild(b);
       });
       wrap.appendChild(row);
