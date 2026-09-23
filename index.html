@@ -466,6 +466,7 @@
   .ftag.k-ex { color: var(--bad); border-color: var(--bad); }
   .ftag.k-nm { color: var(--brand); border-color: var(--brand); }
   .ftag.k-set { color: var(--set); border-color: var(--set); }
+  .ftag-shared { color: #6bb6ff; border-color: #2f5f8f; background: rgba(107, 182, 255, .1); }
   .ffx { margin: 5px 0 0; color: #c2ccd4; font-size: .9rem; line-height: 1.55; }
   .ffx b { color: var(--text); }
   .fget { margin: 3px 0 0; color: var(--muted); font-size: .82rem; line-height: 1.5; }
@@ -568,6 +569,8 @@
   .fkind[aria-pressed="true"].fkind-named { border-color: var(--brand); color: var(--brand); background: rgba(242, 181, 68, .12); }
   .fkind[aria-pressed="true"].fkind-exotic { border-color: var(--bad); color: var(--bad); background: rgba(255, 91, 87, .12); }
   .fkind-set { display: inline-flex; align-items: center; border-color: var(--set); color: var(--set); background: rgba(79, 212, 134, .12); cursor: default; }
+  .fcreate-share { display: flex; align-items: center; gap: 8px; color: var(--text); font-size: .95rem; cursor: pointer; }
+  .fcreate-share input { width: 18px; height: 18px; accent-color: var(--shd); cursor: pointer; }
   .fcreate-subs { display: flex; flex-direction: column; gap: 6px; margin-bottom: 6px; }
   .fcreate-sub-input-locked { background: var(--line); color: var(--muted); cursor: not-allowed; }
   @media (max-width: 560px) {
@@ -1238,7 +1241,8 @@ const supabase = createClient(
       const rows = [];
       (row.main_attrs || []).forEach((v) => rows.push(["주속성", v]));
       (row.sub_attrs || []).forEach((v) => rows.push(["보조속성", v]));
-      const item = { id: "custom-" + row.id, dbId: row.id, custom: true, ko: row.name, kind: row.kind, rows, fx: row.special_effect || undefined };
+      const isOwn = !!session && row.user_id === session.user.id;
+      const item = { id: "custom-" + row.id, dbId: row.id, custom: true, isOwn, shared: row.shared, ko: row.name, kind: row.kind, rows, fx: row.special_effect || undefined };
       (customItems[row.category] || (customItems[row.category] = [])).push(item);
     });
   }
@@ -1391,23 +1395,25 @@ const supabase = createClient(
     });
   }
 
-  async function saveCustomItem({ category, kind, name, mainAttrs, subAttrs, effect }) {
+  async function saveCustomItem({ category, kind, name, mainAttrs, subAttrs, effect, shared }) {
     const { error } = await supabase.from("farm_custom_items").insert({
       category, kind, name,
       main_attrs: mainAttrs,
       sub_attrs: subAttrs,
-      special_effect: effect || null
+      special_effect: effect || null,
+      shared: !!shared
     });
     if (error) { console.error(error); return false; }
     return true;
   }
 
-  async function updateCustomItem(id, { kind, name, mainAttrs, subAttrs, effect }) {
+  async function updateCustomItem(id, { kind, name, mainAttrs, subAttrs, effect, shared }) {
     const { error } = await supabase.from("farm_custom_items").update({
       kind, name,
       main_attrs: mainAttrs,
       sub_attrs: subAttrs,
-      special_effect: effect || null
+      special_effect: effect || null,
+      shared: !!shared
     }).eq("id", id);
     if (error) { console.error(error); return false; }
     return true;
@@ -1428,7 +1434,7 @@ const supabase = createClient(
         const cat = FARM_CATS.find((c) => c.id === catId);
         if (!cat) return;
         if (farmFilter !== "전체" && cat.group !== farmFilter) return;
-        customItems[catId].forEach((it) => items.push(Object.assign({ _cat: catId, _catLabel: cat.label }, it)));
+        customItems[catId].filter((it) => it.isOwn).forEach((it) => items.push(Object.assign({ _cat: catId, _catLabel: cat.label }, it)));
       });
     } else {
       items = (FARM_ITEMS[farmCat] || []).concat(customItems[farmCat] || []);
@@ -1455,6 +1461,7 @@ const supabase = createClient(
       if (it._catLabel) name.appendChild(el("span", "ftag", it._catLabel));
       if (it.kind) name.appendChild(el("span", "ftag " + (it.kind === "특급" ? "k-ex" : it.kind === "네임드" ? "k-nm" : it.kind === "세트" ? "k-set" : ""), it.kind));
       if (it.brand) name.appendChild(el("span", "ftag", it.brand));
+      if (it.custom && it.shared) name.appendChild(el("span", "ftag ftag-shared", it.isOwn ? "공유중" : "공유받음"));
       body.appendChild(name);
       (it.rows || []).forEach(([k, v]) => {
         const p = el("p", "ffx");
@@ -1463,7 +1470,7 @@ const supabase = createClient(
         body.appendChild(p);
       });
       if (it.fx) body.appendChild(el("p", "fget", it.fx));
-      if (it.custom) {
+      if (it.custom && it.isOwn) {
         const actions = el("div", "fitem-actions");
         const editBtn = el("button", "flink", "수정");
         editBtn.type = "button";
@@ -1924,6 +1931,14 @@ const supabase = createClient(
     form.appendChild(labeledField("특수효과", fxInput));
     form.appendChild(fxList);
 
+    const shareRow = el("label", "fcreate-share");
+    const shareInput = document.createElement("input");
+    shareInput.type = "checkbox";
+    if (editRow) shareInput.checked = !!editRow.shared;
+    shareRow.appendChild(shareInput);
+    shareRow.appendChild(document.createTextNode(" 친구들에게 공유하기"));
+    form.appendChild(shareRow);
+
     const saveBtn = el("button", "refresh", editRow ? "수정 완료" : "저장");
     saveBtn.type = "submit";
     form.appendChild(saveBtn);
@@ -1941,7 +1956,7 @@ const supabase = createClient(
       const savedCat = createCat;
       const payload = {
         kind: kindVal, name,
-        mainAttrs, subAttrs, effect: fxInput.value.trim()
+        mainAttrs, subAttrs, effect: fxInput.value.trim(), shared: shareInput.checked
       };
       const ok = editRow
         ? await updateCustomItem(editRow.id, payload)
