@@ -569,6 +569,7 @@
   .fkind[aria-pressed="true"].fkind-exotic { border-color: var(--bad); color: var(--bad); background: rgba(255, 91, 87, .12); }
   .fkind-set { display: inline-flex; align-items: center; border-color: var(--set); color: var(--set); background: rgba(79, 212, 134, .12); cursor: default; }
   .fcreate-subs { display: flex; flex-direction: column; gap: 6px; margin-bottom: 6px; }
+  .fcreate-sub-input-locked { background: var(--line); color: var(--muted); cursor: not-allowed; }
   @media (max-width: 560px) {
     .fgroup { flex-direction: column; gap: 4px; }
     .fgroup-label { width: auto; padding-top: 0; }
@@ -1238,7 +1239,7 @@ const supabase = createClient(
     data.forEach((row) => {
       customRawById[row.id] = row;
       const rows = [];
-      if (row.main_attr) rows.push(["주속성", row.main_attr]);
+      (row.main_attrs || []).forEach((v) => rows.push(["주속성", v]));
       (row.sub_attrs || []).forEach((v) => rows.push(["보조속성", v]));
       const item = { id: "custom-" + row.id, dbId: row.id, custom: true, ko: row.name, kind: row.kind, rows, fx: row.special_effect || undefined };
       (customItems[row.category] || (customItems[row.category] = [])).push(item);
@@ -1326,7 +1327,7 @@ const supabase = createClient(
   let gearExotic = {};
 
   async function loadGearNamed() {
-    const { data, error } = await supabase.from("gear_named").select("item_type, name_ko, talent_name_ko, talent_desc_ko").order("name_ko");
+    const { data, error } = await supabase.from("gear_named").select("item_type, name_ko, talent_name_ko, talent_desc_ko, attrs").order("name_ko");
     if (error) { console.error(error); return; }
     gearNamed = {};
     data.forEach((m) => {
@@ -1393,10 +1394,10 @@ const supabase = createClient(
     });
   }
 
-  async function saveCustomItem({ category, kind, name, mainAttr, subAttrs, effect }) {
+  async function saveCustomItem({ category, kind, name, mainAttrs, subAttrs, effect }) {
     const { error } = await supabase.from("farm_custom_items").insert({
       category, kind, name,
-      main_attr: mainAttr || null,
+      main_attrs: mainAttrs,
       sub_attrs: subAttrs,
       special_effect: effect || null
     });
@@ -1404,10 +1405,10 @@ const supabase = createClient(
     return true;
   }
 
-  async function updateCustomItem(id, { kind, name, mainAttr, subAttrs, effect }) {
+  async function updateCustomItem(id, { kind, name, mainAttrs, subAttrs, effect }) {
     const { error } = await supabase.from("farm_custom_items").update({
       kind, name,
-      main_attr: mainAttr || null,
+      main_attrs: mainAttrs,
       sub_attrs: subAttrs,
       special_effect: effect || null
     }).eq("id", id);
@@ -1507,12 +1508,16 @@ const supabase = createClient(
   let createModelName = undefined; // 무기 실제 모델명: undefined=아직 선택 전, null=직접 입력 선택, string=선택된 모델명
   let createModelKind = null;      // 픽커에서 고른 항목의 고정 등급 (네임드/특급), null이면 기본값(일반) 사용
   let createModelEffect = null;    // 픽커에서 고른 항목의 고정 특수효과 텍스트 (네임드/특급 무기는 효과가 정해져 있음)
+  let createFixedAttrs = [];       // 네임드 방어구의 고유 속성(고정, 수정 불가) — 보조속성 칸에 잠긴 채로 채워짐
   let editingId = null;        // farm_custom_items.id when editing, null when creating
 
-  function pickModel(name, kind, effect) {
+  const formatAttr = (a) => `${a.num >= 0 ? "+" : ""}${a.num}${a.unit || ""} ${a.type}`;
+
+  function pickModel(name, kind, effect, fixedAttrs) {
     createModelName = name;
     createModelKind = kind || null;
     createModelEffect = effect || null;
+    createFixedAttrs = (fixedAttrs || []).map(formatAttr);
     renderCreatePanel();
   }
 
@@ -1556,7 +1561,7 @@ const supabase = createClient(
     createCat = null;
     createModelName = undefined;
     createModelKind = null;
-    createModelEffect = null;
+    createModelEffect = null; createFixedAttrs = [];
     editingId = null;
     renderCreatePanel();
   }
@@ -1567,7 +1572,7 @@ const supabase = createClient(
     createCat = row.category;
     createModelName = undefined;
     createModelKind = null;
-    createModelEffect = null;
+    createModelEffect = null; createFixedAttrs = [];
     editingId = row.id;
     createOpen = true;
     renderCreatePanel();
@@ -1592,7 +1597,7 @@ const supabase = createClient(
       createCat = null;
       createModelName = undefined;
       createModelKind = null;
-      createModelEffect = null;
+      createModelEffect = null; createFixedAttrs = [];
       editingId = null;
       renderCreatePanel();
     });
@@ -1765,7 +1770,7 @@ const supabase = createClient(
           const b = el("button", "fcard fcard-sm", m.name_ko);
           b.type = "button";
           const effect = m.talent_name_ko ? `${m.talent_name_ko}: ${m.talent_desc_ko}` : null;
-          b.addEventListener("click", () => pickModel(m.name_ko, label, effect));
+          b.addEventListener("click", () => pickModel(m.name_ko, label, effect, m.attrs));
           subGrid.appendChild(b);
         });
         center.appendChild(subGrid);
@@ -1799,7 +1804,7 @@ const supabase = createClient(
     const form = el("form", "fcreate-form");
 
     form.appendChild(pickerHeader(() => {
-      if (!editingId) { createModelName = undefined; createModelKind = null; createModelEffect = null; }
+      if (!editingId) { createModelName = undefined; createModelKind = null; createModelEffect = null; createFixedAttrs = []; }
       else { createCat = null; editingId = null; }
       renderCreatePanel();
     }));
@@ -1829,20 +1834,39 @@ const supabase = createClient(
     const nameLabel = createGroup === "무기" ? "무기명" : createGroup === "보호장구" ? "방어구명" : "아이템명";
     form.appendChild(labeledField(nameLabel, nameInput));
 
-    const mainInput = document.createElement("input");
-    mainInput.type = "text";
-    if (editRow) mainInput.value = editRow.main_attr || "";
-    form.appendChild(labeledField("주속성", mainInput));
-
-    const subWrap = el("div", "fcreate-subs");
-    const addSubField = (value) => {
+    const mainWrap = el("div", "fcreate-subs");
+    const addMainField = (value) => {
       const input = document.createElement("input");
       input.type = "text";
-      input.className = "fcreate-sub-input";
+      input.className = "fcreate-main-input";
       if (value) input.value = value;
+      mainWrap.appendChild(input);
+    };
+    if (editRow && editRow.main_attrs && editRow.main_attrs.length) {
+      editRow.main_attrs.forEach((v) => addMainField(v));
+    } else {
+      addMainField();
+    }
+    const mainBody = el("div", "");
+    mainBody.appendChild(mainWrap);
+    const addMainBtn = el("button", "fchip", "+ 주속성 추가");
+    addMainBtn.type = "button";
+    addMainBtn.addEventListener("click", () => addMainField());
+    mainBody.appendChild(addMainBtn);
+    form.appendChild(labeledField("주속성", mainBody));
+
+    const subWrap = el("div", "fcreate-subs");
+    const addSubField = (value, locked) => {
+      const input = document.createElement("input");
+      input.type = "text";
+      input.className = "fcreate-sub-input" + (locked ? " fcreate-sub-input-locked" : "");
+      if (value) input.value = value;
+      if (locked) input.readOnly = true;
       subWrap.appendChild(input);
     };
-    if (editRow && editRow.sub_attrs && editRow.sub_attrs.length) {
+    if (!editRow && createFixedAttrs.length) {
+      createFixedAttrs.forEach((v) => addSubField(v, true));
+    } else if (editRow && editRow.sub_attrs && editRow.sub_attrs.length) {
       editRow.sub_attrs.forEach((v) => addSubField(v));
     } else {
       addSubField();
@@ -1884,13 +1908,16 @@ const supabase = createClient(
       e.preventDefault();
       const name = nameInput.value.trim();
       if (!name) { nameInput.focus(); return; }
+      const mainAttrs = Array.from(mainWrap.querySelectorAll(".fcreate-main-input"))
+        .map((i) => i.value.trim())
+        .filter(Boolean);
       const subAttrs = Array.from(subWrap.querySelectorAll(".fcreate-sub-input"))
         .map((i) => i.value.trim())
         .filter(Boolean);
       const savedCat = createCat;
       const payload = {
         kind: kindVal, name,
-        mainAttr: mainInput.value.trim(), subAttrs, effect: fxInput.value.trim()
+        mainAttrs, subAttrs, effect: fxInput.value.trim()
       };
       const ok = editRow
         ? await updateCustomItem(editRow.id, payload)
