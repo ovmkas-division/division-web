@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>division-web</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    color-scheme: dark;
+    --void: #0d1013;
+    --deck: #14181d;
+    --line: #29313a;
+    --line-hot: #3b4651;
+    --text: #e7eaed;
+    --muted: #8b97a3;
+    --shd: #ff6a00;
+    --bad: #ff5b57;
+    --ink-on-shd: #170b00;
+    --display: "Barlow Condensed", "Noto Sans KR", system-ui, sans-serif;
+    --body: "Noto Sans KR", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    color: var(--text);
+    font-family: var(--body);
+    background: radial-gradient(900px 420px at 50% -8%, rgba(255, 106, 0, .13), transparent 65%), var(--void);
+  }
+  main { max-width: 440px; margin: 0 auto; padding: clamp(16px, 4vw, 44px) 20px 64px; }
+
+  header { display: flex; align-items: center; gap: 12px; padding-bottom: 16px; position: relative; }
+  header::after {
+    content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2px;
+    background: linear-gradient(90deg, var(--shd) 0 76px, var(--line) 76px);
+  }
+  .mark { flex: none; width: 30px; height: 30px; color: var(--shd); }
+  h1 { flex: 1; margin: 0; font-family: var(--display); font-weight: 600; font-size: 1.6rem; letter-spacing: .03em; }
+  .back-link { color: var(--muted); font-size: .85rem; text-decoration: none; }
+  .back-link:hover { color: var(--shd); }
+
+  .card { position: relative; margin-top: 20px; padding: 20px 18px; background: var(--deck); border: 1px solid var(--line); }
+  .card::before, .card::after { content: ""; position: absolute; width: 16px; height: 16px; pointer-events: none; }
+  .card::before { top: -1px; left: -1px; border-top: 2px solid var(--shd); border-left: 2px solid var(--shd); }
+  .card::after { right: -1px; bottom: -1px; border-right: 2px solid var(--shd); border-bottom: 2px solid var(--shd); }
+
+  input {
+    display: block; width: 100%; margin-bottom: 10px; padding: 10px 12px;
+    background: var(--void); border: 1px solid var(--line-hot); color: var(--text);
+    font: inherit; font-size: .95rem;
+  }
+  input::placeholder { color: var(--muted); }
+  input:focus-visible { outline: 2px solid var(--shd); outline-offset: 1px; }
+
+  button {
+    font: inherit; cursor: pointer; border: 0; padding: 9px 22px;
+    background: var(--shd); color: var(--ink-on-shd); font-weight: 700;
+    clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
+  }
+  button:hover { background: #ff8b3d; }
+  #logoutBtn { background: transparent; color: var(--muted); border: 1px solid var(--line-hot); clip-path: none; padding: 6px 16px; font-size: .85rem; }
+  #logoutBtn:hover { color: var(--text); border-color: var(--muted); background: transparent; }
+
+  #authStatus { margin: 8px 0 0; color: var(--bad); font-size: .85rem; }
+
+  #noteForm { display: flex; gap: 8px; margin-top: 14px; }
+  #noteForm input { margin: 0; flex: 1; }
+
+  #noteList { list-style: none; margin: 16px 0 0; padding: 0; border-top: 1px solid var(--line); }
+  #noteList li { padding: 12px 2px; border-bottom: 1px solid var(--line); font-size: .95rem; }
+  #noteList li:last-child { border-bottom: 0; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <svg class="mark" viewBox="0 0 40 40" aria-hidden="true">
+      <path d="M20 2 36 11v18L20 38 4 29V11Z" fill="none" stroke="currentColor" stroke-width="2.5"/>
+      <path d="M20 12l7 4v8l-7 4-7-4v-8Z" fill="currentColor"/>
+    </svg>
+    <h1>DIVISION-WEB</h1>
+    <a href="division2.html" class="back-link">← 확전 타겟 루트</a>
+  </header>
+
+  <section id="authSection" class="card">
+    <input id="email" type="email" placeholder="아이디" required>
+    <input id="password" type="password" placeholder="비밀번호" required>
+    <button id="loginBtn">로그인</button>
+    <p id="authStatus"></p>
+  </section>
+
+  <section id="appSection" class="card" hidden>
+    <button id="logoutBtn">로그아웃</button>
+
+    <form id="noteForm">
+      <input id="content" type="text" placeholder="내용 입력" required>
+      <button type="submit">저장</button>
+    </form>
+
+    <ul id="noteList"></ul>
+  </section>
+</main>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
+    const SUPABASE_URL = 'https://ggntvxlprneqnzkgaygm.supabase.co'
+    const SUPABASE_ANON_KEY = 'sb_publishable_H61jIDV83D9sXctKOkBO3A_cXkLnhfm'
+
+    const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
+
+    const authSection = document.getElementById('authSection')
+    const appSection = document.getElementById('appSection')
+    const emailInput = document.getElementById('email')
+    const passwordInput = document.getElementById('password')
+    const loginBtn = document.getElementById('loginBtn')
+    const logoutBtn = document.getElementById('logoutBtn')
+    const authStatus = document.getElementById('authStatus')
+    const noteForm = document.getElementById('noteForm')
+    const contentInput = document.getElementById('content')
+    const noteList = document.getElementById('noteList')
+
+    loginBtn.addEventListener('click', async () => {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: emailInput.value,
+        password: passwordInput.value
+      })
+
+      if (error) {
+        authStatus.textContent = error.message
+        return
+      }
+
+      window.location.href = 'division2.html'
+    })
+
+    logoutBtn.addEventListener('click', () => supabase.auth.signOut())
+
+    async function loadNotes() {
+      const { data, error } = await supabase
+        .from('notes')
+        .select('*')
+        .order('created_at', { ascending: false })
+
+      if (error) {
+        console.error(error)
+        return
+      }
+
+      noteList.innerHTML = ''
+      for (const n of data) {
+        const li = document.createElement('li')
+        li.textContent = n.content
+        noteList.appendChild(li)
+      }
+    }
+
+    noteForm.addEventListener('submit', async (e) => {
+      e.preventDefault()
+      const { error } = await supabase.from('notes').insert({ content: contentInput.value })
+
+      if (error) {
+        console.error(error)
+        return
+      }
+
+      contentInput.value = ''
+      loadNotes()
+    })
+
+    function render(session) {
+      authSection.hidden = !!session
+      appSection.hidden = !session
+      if (session) loadNotes()
+    }
+
+    supabase.auth.onAuthStateChange((_event, session) => render(session))
+    const { data: { session } } = await supabase.auth.getSession()
+    render(session)
+  </script>
+</body>
+</html>
