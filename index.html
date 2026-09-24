@@ -1360,6 +1360,8 @@ const supabase = createClient(
 
   // 세트별 부위 아이템명 (gear_set_pieces) — "set-<en 정규화>" id로 묶는다 (FARM_CATS 세트 id와 동일한 규칙)
   const SLOT_LABELS = { mask: "마스크", chest: "방탄복", backpack: "백팩", gloves: "장갑", holster: "권총집", kneepads: "무릎보호대" };
+  // FARM_CATS 보호장구 id(mask/chest/pack/gloves/holster/knee) -> gear_set_pieces.slot 값
+  const GEAR_SLOT_TO_PIECE_SLOT = { mask: "mask", chest: "chest", pack: "backpack", gloves: "gloves", holster: "holster", knee: "kneepads" };
 
   // 무기/방어구 속성 카탈로그 — 전부 DB(gear_core_attrs/gear_secondary_attrs/
   // weapon_core_attrs/weapon_secondary_attrs/gear_mods)에서 불러온다.
@@ -2045,6 +2047,34 @@ const supabase = createClient(
       } else if (isGear) {
         addPickerSection(gearNamed[createCat] || [], "네임드");
         addPickerSection(gearExotic[createCat] || [], "특급", "fcreate-subhead-exotic");
+
+        // 이 부위(마스크/방탄복/... )에 해당하는 세트 아이템도 브랜드 목록 아래에 같이 보여준다.
+        const pieceSlot = GEAR_SLOT_TO_PIECE_SLOT[createCat];
+        const setMatches = [];
+        GEAR_SETS.forEach((g) => {
+          const setCat = "set-" + nameKey(g.en);
+          (setPieces[setCat] || []).forEach((p) => {
+            if (p.slot === pieceSlot) setMatches.push({ piece: p, gearSet: g, setCat });
+          });
+        });
+        if (setMatches.length) {
+          center.appendChild(el("div", "fcreate-subhead", "세트"));
+          const setGrid = el("div", "fcard-grid fcard-grid-scroll");
+          setMatches.forEach(({ piece, gearSet, setCat }) => {
+            const b = el("button", "fcard fcard-sm", `${gearSet.ko}: ${piece.name_ko}`);
+            b.type = "button";
+            const bonus = piece.slot === "chest" ? gearSet.chest : piece.slot === "backpack" ? gearSet.pack : null;
+            const effect = bonus ? `${bonus.n}: ${bonus.t}` : null;
+            b.addEventListener("click", () => {
+              createGroup = "세트";
+              createCat = setCat;
+              createPieceSlot = piece.slot;
+              pickModel(piece.name_ko, "세트", effect);
+            });
+            setGrid.appendChild(b);
+          });
+          center.appendChild(setGrid);
+        }
       }
 
       search.addEventListener("input", () => {
