@@ -1382,6 +1382,13 @@ const supabase = createClient(
     { key: "holster", label: "권총집", type: "gear", cat: "holster" },
     { key: "kneepads", label: "무릎보호대", type: "gear", cat: "knee" }
   ];
+  // 빌드 슬롯 화면 배치: 무기 3개 한 줄, 방어구는 부위 2개씩 한 줄
+  const BUILD_SLOT_ROWS = [
+    ["weapon1", "weapon2", "weapon3"],
+    ["mask", "backpack"],
+    ["chest", "gloves"],
+    ["holster", "kneepads"]
+  ];
   let builds = [];
   let buildNameByItemId = {}; // farm_custom_items.id -> 그 아이템이 포함된 빌드명 (표시용, "적용 빌드" 태그)
 
@@ -2166,22 +2173,25 @@ const supabase = createClient(
     nameInput.addEventListener("input", () => { buildDraft.name = nameInput.value; });
     center.appendChild(labeledField("빌드명", nameInput));
 
-    const grid = el("div", "fcard-grid");
-    BUILD_SLOTS.forEach((s) => {
-      const filled = buildDraft.slots[s.key];
-      const b = el("button", "fcard fcard-sm", filled ? `${s.label}: ${filled.name}` : s.label);
-      b.type = "button";
-      b.addEventListener("click", () => {
-        buildReturnSlot = s.key;
-        editingId = null;
-        createModelName = undefined; createModelKind = null; createModelEffect = null; createFixedAttrs = [];
-        if (s.type === "weapon") { createGroup = "무기"; createCat = null; }
-        else { createGroup = "보호장구"; createCat = s.cat; }
-        renderCreatePanel();
+    BUILD_SLOT_ROWS.forEach((keys) => {
+      const row = el("div", "fcard-grid fcard-grid-build");
+      keys.forEach((key) => {
+        const s = BUILD_SLOTS.find((x) => x.key === key);
+        const filled = buildDraft.slots[s.key];
+        const b = el("button", "fcard fcard-sm", filled ? `${s.label}: ${filled.name}` : s.label);
+        b.type = "button";
+        b.addEventListener("click", () => {
+          buildReturnSlot = s.key;
+          editingId = null;
+          createModelName = undefined; createModelKind = null; createModelEffect = null; createFixedAttrs = [];
+          if (s.type === "weapon") { createGroup = "무기"; createCat = null; }
+          else { createGroup = "보호장구"; createCat = s.cat; }
+          renderCreatePanel();
+        });
+        row.appendChild(b);
       });
-      grid.appendChild(b);
+      center.appendChild(row);
     });
-    center.appendChild(grid);
 
     const skill1Input = document.createElement("input");
     skill1Input.type = "text";
