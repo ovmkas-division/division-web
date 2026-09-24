@@ -509,6 +509,7 @@
   .fcreate { margin: 10px 0 0; padding: 20px; min-height: 60vh; background: var(--deck); border: 1px solid var(--line); }
   .fcreate[hidden] { display: none; }
   .fcreate-headerbar { display: flex; align-items: center; gap: 12px; width: 100%; margin: 0 0 20px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+  .fcreate-headerbar .farm-toolbar-inline { margin-left: auto; }
   .fcreate-backbtn {
     flex: none; width: 36px; height: 36px;
     display: grid; place-items: center;
@@ -1863,6 +1864,41 @@ const supabase = createClient(
     return wrap;
   }
 
+  function buildToolbar() {
+    const toolbar = el("div", "farm-toolbar farm-toolbar-inline");
+    const homeBtn = el("button", "ficon-btn", "⌂");
+    homeBtn.type = "button";
+    homeBtn.setAttribute("aria-label", "새 항목 만들기");
+    homeBtn.title = "새 항목 만들기";
+    homeBtn.addEventListener("click", () => {
+      if (buildReturnSlot) {
+        buildReturnSlot = null;
+        createGroup = "빌드";
+        createCat = null;
+        createModelName = undefined; createModelKind = null; createModelEffect = null; createFixedAttrs = []; createPieceSlot = null;
+        editingId = null;
+        renderCreatePanel();
+        return;
+      }
+      createGroup = null;
+      createCat = null;
+      createModelName = undefined;
+      createModelKind = null;
+      createModelEffect = null; createFixedAttrs = []; createPieceSlot = null;
+      editingId = null;
+      buildDraft = null;
+      renderCreatePanel();
+    });
+    const listBtn = el("button", "ficon-btn", "☰");
+    listBtn.type = "button";
+    listBtn.setAttribute("aria-label", "체크리스트 보기");
+    listBtn.title = "체크리스트 보기";
+    listBtn.addEventListener("click", () => closeCreatePanel());
+    toolbar.appendChild(homeBtn);
+    toolbar.appendChild(listBtn);
+    return toolbar;
+  }
+
   function pickerHeader(onBack) {
     const bar = el("div", "fcreate-headerbar");
     const back = el("button", "fcreate-backbtn", "‹");
@@ -1871,6 +1907,7 @@ const supabase = createClient(
     back.addEventListener("click", onBack);
     bar.appendChild(back);
     bar.appendChild(breadcrumb());
+    bar.appendChild(buildToolbar());
     return bar;
   }
 
@@ -1927,39 +1964,6 @@ const supabase = createClient(
     renderBulkBar();
     if (!createOpen) return;
 
-    const toolbar = el("div", "farm-toolbar farm-toolbar-inline");
-    const homeBtn = el("button", "ficon-btn", "⌂");
-    homeBtn.type = "button";
-    homeBtn.setAttribute("aria-label", "새 항목 만들기");
-    homeBtn.title = "새 항목 만들기";
-    homeBtn.addEventListener("click", () => {
-      if (buildReturnSlot) {
-        buildReturnSlot = null;
-        createGroup = "빌드";
-        createCat = null;
-        createModelName = undefined; createModelKind = null; createModelEffect = null; createFixedAttrs = []; createPieceSlot = null;
-        editingId = null;
-        renderCreatePanel();
-        return;
-      }
-      createGroup = null;
-      createCat = null;
-      createModelName = undefined;
-      createModelKind = null;
-      createModelEffect = null; createFixedAttrs = []; createPieceSlot = null;
-      editingId = null;
-      buildDraft = null;
-      renderCreatePanel();
-    });
-    const listBtn = el("button", "ficon-btn", "☰");
-    listBtn.type = "button";
-    listBtn.setAttribute("aria-label", "체크리스트 보기");
-    listBtn.title = "체크리스트 보기";
-    listBtn.addEventListener("click", () => closeCreatePanel());
-    toolbar.appendChild(homeBtn);
-    toolbar.appendChild(listBtn);
-    box.appendChild(toolbar);
-
     if (createGroup === "빌드") {
       if (buildSkillSlot) { renderSkillPicker(box); return; }
       renderBuildEditor(box);
@@ -1967,6 +1971,7 @@ const supabase = createClient(
     }
 
     if (!createGroup) {
+      box.appendChild(buildToolbar());
       const center = el("div", "fcreate-center");
       center.appendChild(el("div", "fcreate-intro", "어떤 종류의 항목을 만드시나요?"));
 
