@@ -1425,11 +1425,11 @@ const supabase = createClient(
   async function saveBuild(draft) {
     const payload = { name: draft.name, skill1: draft.skill1 || null, skill2: draft.skill2 || null, shared: !!draft.shared };
     BUILD_SLOTS.forEach((s) => { payload[s.key + "_id"] = draft.slots[s.key] ? draft.slots[s.key].itemId : null; });
-    const { error } = draft.id
-      ? await supabase.from("farm_builds").update(payload).eq("id", draft.id)
-      : await supabase.from("farm_builds").insert(payload);
-    if (error) { console.error(error); return false; }
-    return true;
+    const { data, error } = draft.id
+      ? await supabase.from("farm_builds").update(payload).eq("id", draft.id).select().single()
+      : await supabase.from("farm_builds").insert(payload).select().single();
+    if (error) { console.error(error); return null; }
+    return data;
   }
 
   async function deleteBuild(id) {
@@ -1555,8 +1555,13 @@ const supabase = createClient(
   function renderFarmList() {
     const list = $("farm-list");
     list.replaceChildren();
-    if ((farmCat === "build" && !farmFilter) || farmFilter === "빌드") {
-      renderBuildItems(list, farmFilter === "빌드" ? builds.filter((b) => b.isOwn) : builds);
+    if (farmFilter === "빌드") {
+      renderBuildItems(list, builds.filter((b) => b.isOwn));
+      return;
+    }
+    if (typeof farmCat === "string" && farmCat.indexOf("build-") === 0 && !farmFilter) {
+      const buildId = Number(farmCat.slice("build-".length));
+      renderBuildItems(list, builds.filter((b) => b.id === buildId));
       return;
     }
     let items;
@@ -1663,17 +1668,22 @@ const supabase = createClient(
       box.appendChild(wrap);
     });
 
-    // 빌드는 하위 부위 구분이 없는 단일 항목이라 칩 하나로 보여준다
-    const buildWrap = el("div", "fgroup");
-    buildWrap.appendChild(el("span", "fgroup-label", "빌드"));
-    const buildRow = el("div", "fchips");
-    const buildBtn = el("button", "fchip", "빌드 목록");
-    buildBtn.type = "button";
-    buildBtn.setAttribute("aria-pressed", String(!farmFilter && farmCat === "build"));
-    buildBtn.addEventListener("click", () => { farmCat = "build"; farmFilter = null; renderFarmChips(); });
-    buildRow.appendChild(buildBtn);
-    buildWrap.appendChild(buildRow);
-    box.appendChild(buildWrap);
+    // 빌드는 세트처럼 각 빌드명을 칩으로 보여준다
+    if (builds.length) {
+      const buildWrap = el("div", "fgroup");
+      buildWrap.appendChild(el("span", "fgroup-label", "빌드"));
+      const buildRow = el("div", "fchips");
+      builds.forEach((b) => {
+        const chipCat = "build-" + b.id;
+        const btn = el("button", "fchip", b.name);
+        btn.type = "button";
+        btn.setAttribute("aria-pressed", String(!farmFilter && farmCat === chipCat));
+        btn.addEventListener("click", () => { farmCat = chipCat; farmFilter = null; renderFarmChips(); });
+        buildRow.appendChild(btn);
+      });
+      buildWrap.appendChild(buildRow);
+      box.appendChild(buildWrap);
+    }
 
     renderFarmList();
   }
@@ -2243,12 +2253,12 @@ const supabase = createClient(
       if (!name) { nameInput.focus(); return; }
       buildDraft.name = name;
       buildDraft.shared = shareInput.checked;
-      const ok = await saveBuild(buildDraft);
-      if (!ok) return;
+      const saved = await saveBuild(buildDraft);
+      if (!saved) return;
       await loadCustomItems();
       await loadBuilds();
       buildDraft = null;
-      farmCat = "build";
+      farmCat = "build-" + saved.id;
       closeCreatePanel();
       renderFarmChips();
     });
