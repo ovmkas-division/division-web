@@ -581,7 +581,7 @@
   .fattr-btn[aria-pressed="true"].fattr-red, .fattr-tab[aria-pressed="true"].fattr-red { border-color: var(--bad); color: var(--bad); background: rgba(255, 91, 87, .12); }
   .fattr-btn[aria-pressed="true"].fattr-blue, .fattr-tab[aria-pressed="true"].fattr-blue { border-color: #6bb6ff; color: #6bb6ff; background: rgba(107, 182, 255, .12); }
   .fattr-btn[aria-pressed="true"].fattr-yellow, .fattr-tab[aria-pressed="true"].fattr-yellow { border-color: var(--brand); color: var(--brand); background: rgba(242, 181, 68, .12); }
-  .ftag-locked { color: var(--muted); border-color: var(--line-hot); background: rgba(255, 255, 255, .04); }
+  .ftag-locked { color: var(--text); border-color: var(--shd); background: rgba(255, 106, 0, .12); }
   @media (max-width: 560px) {
     .fgroup { flex-direction: column; gap: 4px; }
     .fgroup-label { width: auto; padding-top: 0; }
@@ -1365,7 +1365,7 @@ const supabase = createClient(
   // weapon_core_attrs/weapon_secondary_attrs/gear_mods)에서 불러온다.
   // 무기와 방어구는 나무위키상 속성 체계 자체가 다르다:
   //   방어구: 핵심속성 3종 중 1개 택1 + 카테고리별 비핵심속성(무기/방어도/스킬) + (마스크·방탄복·백팩만) 개조
-  //   무기: 무기군마다 정해진 핵심속성 1~2개(무기군 대미지 공용 + 무기군별 고유 스탯) + 공용 비핵심속성 13종
+  //   무기: 무기군마다 정해진 핵심속성 1~2개(전 무기군 공용 "무기 대미지" + 무기군별 고유 스탯) + 공용 비핵심속성 13종
   let gearCoreAttrs = [];       // [{label, color}]
   let gearSecondaryGroups = []; // [{label, color, items:[name,...]}]
   let weaponCoreAttrs = {};     // { weapon_group: [name,...] }

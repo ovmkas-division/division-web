@@ -4,10 +4,11 @@
 --
 -- 무기와 방어구는 속성 체계 자체가 다르다:
 --   방어구: 핵심속성 3종 중 1개 택1 + 카테고리별(무기/방어도/스킬) 비핵심속성 12종
---   무기:   무기군마다 정해진 핵심속성 1~2개(무기군 대미지 공용 + 무기군별 고유 스탯) + 공용 비핵심속성 13종
+--   무기:   무기군마다 정해진 핵심속성 1~2개(전 무기군 공용 "무기 대미지" + 무기군별 고유 스탯) + 공용 비핵심속성 13종
+--   (나무위키 원문 표기는 "무기군 대미지"이나 실제 게임 UI 표기에 맞춰 "무기 대미지"로 통일)
 --
 -- 권총(pistol)의 고유 핵심속성은 나무위키 문서 자체에 누락되어 있어("핵심 속성" 표에
--- 권총 행이 없음, 5.1 권총 섹션에도 서술 없음) 확인된 "무기군 대미지" 하나만 넣는다.
+-- 권총 행이 없음, 5.1 권총 섹션에도 서술 없음) 확인된 "무기 대미지" 하나만 넣는다.
 -- 추후 정확한 값이 확인되면 weapon_core_attrs에 행을 추가하면 된다.
 
 create table gear_core_attrs (
@@ -55,13 +56,13 @@ alter table weapon_core_attrs enable row level security;
 create policy "public read" on weapon_core_attrs for select using (true);
 
 insert into weapon_core_attrs (weapon_group, name_ko) values
-('ar', '무기군 대미지'), ('ar', '생명력 대미지'),
-('rifle', '무기군 대미지'), ('rifle', '치명타 대미지'),
-('dmr', '무기군 대미지'), ('dmr', '헤드샷 대미지'),
-('smg', '무기군 대미지'), ('smg', '치명타 확률'),
-('lmg', '무기군 대미지'), ('lmg', '비엄폐 대상 대미지'),
-('sg', '무기군 대미지'), ('sg', '방어도 대상 대미지'),
-('pistol', '무기군 대미지');
+('ar', '무기 대미지'), ('ar', '생명력 대미지'),
+('rifle', '무기 대미지'), ('rifle', '치명타 대미지'),
+('dmr', '무기 대미지'), ('dmr', '헤드샷 대미지'),
+('smg', '무기 대미지'), ('smg', '치명타 확률'),
+('lmg', '무기 대미지'), ('lmg', '비엄폐 대상 대미지'),
+('sg', '무기 대미지'), ('sg', '방어도 대상 대미지'),
+('pistol', '무기 대미지');
 
 create table weapon_secondary_attrs (
   id bigint generated always as identity primary key,

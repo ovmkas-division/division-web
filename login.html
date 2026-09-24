@@ -61,17 +61,8 @@
     clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 8px 100%, 0 calc(100% - 8px));
   }
   button:hover { background: #ff8b3d; }
-  #logoutBtn { background: transparent; color: var(--muted); border: 1px solid var(--line-hot); clip-path: none; padding: 6px 16px; font-size: .85rem; }
-  #logoutBtn:hover { color: var(--text); border-color: var(--muted); background: transparent; }
 
   #authStatus { margin: 8px 0 0; color: var(--bad); font-size: .85rem; }
-
-  #noteForm { display: flex; gap: 8px; margin-top: 14px; }
-  #noteForm input { margin: 0; flex: 1; }
-
-  #noteList { list-style: none; margin: 16px 0 0; padding: 0; border-top: 1px solid var(--line); }
-  #noteList li { padding: 12px 2px; border-bottom: 1px solid var(--line); font-size: .95rem; }
-  #noteList li:last-child { border-bottom: 0; }
 </style>
 </head>
 <body>
@@ -91,17 +82,6 @@
     <button id="loginBtn">로그인</button>
     <p id="authStatus"></p>
   </section>
-
-  <section id="appSection" class="card" hidden>
-    <button id="logoutBtn">로그아웃</button>
-
-    <form id="noteForm">
-      <input id="content" type="text" placeholder="내용 입력" required>
-      <button type="submit">저장</button>
-    </form>
-
-    <ul id="noteList"></ul>
-  </section>
 </main>
 
   <script type="module">
@@ -112,16 +92,10 @@
 
     const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY)
 
-    const authSection = document.getElementById('authSection')
-    const appSection = document.getElementById('appSection')
     const emailInput = document.getElementById('email')
     const passwordInput = document.getElementById('password')
     const loginBtn = document.getElementById('loginBtn')
-    const logoutBtn = document.getElementById('logoutBtn')
     const authStatus = document.getElementById('authStatus')
-    const noteForm = document.getElementById('noteForm')
-    const contentInput = document.getElementById('content')
-    const noteList = document.getElementById('noteList')
 
     loginBtn.addEventListener('click', async () => {
       const { error } = await supabase.auth.signInWithPassword({
@@ -137,49 +111,9 @@
       window.location.href = 'index.html'
     })
 
-    logoutBtn.addEventListener('click', () => supabase.auth.signOut())
-
-    async function loadNotes() {
-      const { data, error } = await supabase
-        .from('notes')
-        .select('*')
-        .order('created_at', { ascending: false })
-
-      if (error) {
-        console.error(error)
-        return
-      }
-
-      noteList.innerHTML = ''
-      for (const n of data) {
-        const li = document.createElement('li')
-        li.textContent = n.content
-        noteList.appendChild(li)
-      }
-    }
-
-    noteForm.addEventListener('submit', async (e) => {
-      e.preventDefault()
-      const { error } = await supabase.from('notes').insert({ content: contentInput.value })
-
-      if (error) {
-        console.error(error)
-        return
-      }
-
-      contentInput.value = ''
-      loadNotes()
-    })
-
-    function render(session) {
-      authSection.hidden = !!session
-      appSection.hidden = !session
-      if (session) loadNotes()
-    }
-
-    supabase.auth.onAuthStateChange((_event, session) => render(session))
+    // 이미 로그인된 상태로 이 페이지에 들어오면(뒤로가기 등) 바로 메인으로 보낸다.
     const { data: { session } } = await supabase.auth.getSession()
-    render(session)
+    if (session) window.location.replace('index.html')
   </script>
 </body>
 </html>
