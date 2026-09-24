@@ -475,6 +475,10 @@
   .flink:hover { color: var(--text); }
   .flink-danger:hover { color: var(--bad); }
 
+  .fbulk { display: flex; align-items: center; gap: 10px; margin: 10px 0; padding: 8px 10px; background: rgba(255, 106, 0, .08); border: 1px solid var(--shd); font-size: .85rem; }
+  .fbulk span { flex: 1; color: var(--text); }
+  .fitem-select { margin-right: 10px; }
+
   /* 파밍 항목 생성 폼 */
   .fcreate-toggle { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 14px 0 0; }
   .farm-toolbar { display: flex; gap: 8px; }
@@ -725,9 +729,11 @@
   <div id="view-farm" class="view" hidden>
     <div class="fcreate-toggle">
       <button id="farm-create-btn" class="fchip" type="button">+ 항목 생성</button>
+      <button id="farm-select-btn" class="fchip" type="button">선택 삭제</button>
     </div>
     <div id="farm-create" class="fcreate" hidden></div>
     <div id="farm-chips"></div>
+    <div id="farm-bulk" class="fbulk" hidden></div>
     <ul id="farm-list" class="flist"></ul>
   </div>
 </main>
@@ -1199,6 +1205,8 @@ const supabase = createClient(
   ].concat(GEAR_SETS.map((g) => ({ id: "set-" + nameKey(g.en), label: g.ko, group: "세트" })));
   let farmCat = FARM_CATS[0].id;
   let farmFilter = null; // null=부위별 탐색 모드, "전체"/"무기"/"보호장구"/"세트"=내가 등록한 것만 모아보기
+  let deleteMode = false;              // 체크박스로 여러 개 골라서 한 번에 삭제하는 모드
+  const selectedForDelete = new Set(); // deleteMode에서 선택된 farm_custom_items.id 모음
 
   // 분류별 아이템. kind: 고급 / 네임드 / 특급
   const FARM_ITEMS = {
@@ -1594,18 +1602,58 @@ const supabase = createClient(
     if (!buildsToShow.length) list.appendChild(el("li", "empty", "등록된 빌드가 없습니다."));
   }
 
+  function syncSelectBtn() {
+    const btn = $("farm-select-btn");
+    btn.textContent = deleteMode ? "선택 취소" : "선택 삭제";
+    btn.setAttribute("aria-pressed", String(deleteMode));
+  }
+
+  function renderBulkBar() {
+    const bar = $("farm-bulk");
+    bar.replaceChildren();
+    bar.hidden = !deleteMode;
+    if (!deleteMode) return;
+    bar.appendChild(el("span", "", `${selectedForDelete.size}개 선택됨`));
+    const delBtn = el("button", "flink flink-danger", "선택 삭제");
+    delBtn.type = "button";
+    delBtn.disabled = !selectedForDelete.size;
+    delBtn.addEventListener("click", async () => {
+      if (!selectedForDelete.size) return;
+      if (!confirm(`선택한 ${selectedForDelete.size}개 항목을 삭제할까요?`)) return;
+      await Promise.all([...selectedForDelete].map((id) => deleteCustomItem(id)));
+      selectedForDelete.clear();
+      deleteMode = false;
+      syncSelectBtn();
+      await loadCustomItems();
+      renderFarmChips();
+    });
+    bar.appendChild(delBtn);
+    const cancelBtn = el("button", "flink", "취소");
+    cancelBtn.type = "button";
+    cancelBtn.addEventListener("click", () => {
+      deleteMode = false;
+      selectedForDelete.clear();
+      syncSelectBtn();
+      renderFarmChips();
+    });
+    bar.appendChild(cancelBtn);
+  }
+
   function renderFarmList() {
     const list = $("farm-list");
     list.replaceChildren();
     if (farmFilter === "빌드") {
+      $("farm-bulk").hidden = true;
       renderBuildItems(list, builds.filter((b) => b.isOwn));
       return;
     }
     if (typeof farmCat === "string" && farmCat.indexOf("build-") === 0 && !farmFilter) {
+      $("farm-bulk").hidden = true;
       const buildId = Number(farmCat.slice("build-".length));
       renderBuildItems(list, builds.filter((b) => b.id === buildId));
       return;
     }
+    renderBulkBar();
     let items;
     if (farmFilter) {
       items = [];
@@ -1624,15 +1672,28 @@ const supabase = createClient(
       const li = el("li", "fitem" + (farmDone[key] ? " done" : ""));
       if (it.kind) li.dataset.kind = it.kind;
       const label = el("label", "frow");
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.checked = !!farmDone[key];
-      cb.addEventListener("change", () => {
-        if (cb.checked) farmDone[key] = true; else delete farmDone[key];
-        li.classList.toggle("done", cb.checked);
-        toggleFarmDone(key, cb.checked);
-      });
-      label.appendChild(cb);
+      const canSelect = deleteMode && it.custom && it.isOwn;
+      if (canSelect) {
+        const selectCb = document.createElement("input");
+        selectCb.type = "checkbox";
+        selectCb.className = "fitem-select";
+        selectCb.checked = selectedForDelete.has(it.dbId);
+        selectCb.addEventListener("change", () => {
+          if (selectCb.checked) selectedForDelete.add(it.dbId); else selectedForDelete.delete(it.dbId);
+          renderBulkBar();
+        });
+        label.appendChild(selectCb);
+      } else {
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = !!farmDone[key];
+        cb.addEventListener("change", () => {
+          if (cb.checked) farmDone[key] = true; else delete farmDone[key];
+          li.classList.toggle("done", cb.checked);
+          toggleFarmDone(key, cb.checked);
+        });
+        label.appendChild(cb);
+      }
       const body = el("div", "fbody");
       const name = el("div", "fname");
       name.appendChild(el("b", "", it.ko));
@@ -1651,7 +1712,7 @@ const supabase = createClient(
       });
       if (it.fx) body.appendChild(el("p", "fget", it.fx));
       if (it.mod) body.appendChild(el("p", "ffx", `개조: ${it.mod}`));
-      if (it.custom && it.isOwn) {
+      if (it.custom && it.isOwn && !deleteMode) {
         const actions = el("div", "fitem-actions");
         const editBtn = el("button", "flink", "수정");
         editBtn.type = "button";
@@ -2469,6 +2530,12 @@ const supabase = createClient(
       if (createOpen) { closeCreatePanel(); return; }
       createOpen = true;
       renderCreatePanel();
+    });
+    $("farm-select-btn").addEventListener("click", () => {
+      deleteMode = !deleteMode;
+      selectedForDelete.clear();
+      syncSelectBtn();
+      renderFarmList();
     });
   }
 
