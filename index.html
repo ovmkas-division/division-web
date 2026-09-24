@@ -475,7 +475,14 @@
   .flink:hover { color: var(--text); }
   .flink-danger:hover { color: var(--bad); }
 
-  .fbulk { display: flex; align-items: center; gap: 10px; margin: 10px 0; padding: 8px 10px; background: rgba(255, 106, 0, .08); border: 1px solid var(--shd); font-size: .85rem; }
+  .fbulk {
+    display: flex; align-items: center; gap: 10px; padding: 12px 14px;
+    background: var(--deck); border: 1px solid var(--shd); font-size: .85rem;
+    position: fixed; left: 0; right: 0; bottom: 0; max-width: 800px; margin: 0 auto;
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, .45); z-index: 5;
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+  }
+  .fbulk[hidden] { display: none; }
   .fbulk span { flex: 1; color: var(--text); }
   .fitem-select { margin-right: 10px; }
 
@@ -1612,6 +1619,7 @@ const supabase = createClient(
     const bar = $("farm-bulk");
     bar.replaceChildren();
     bar.hidden = !deleteMode;
+    $("farm-list").style.paddingBottom = deleteMode ? "70px" : "";
     if (!deleteMode) return;
     bar.appendChild(el("span", "", `${selectedForDelete.size}개 선택됨`));
     const delBtn = el("button", "flink flink-danger", "선택 삭제");
