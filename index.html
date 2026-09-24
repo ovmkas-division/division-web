@@ -1452,6 +1452,17 @@ const supabase = createClient(
   }
 
   async function saveBuild(draft) {
+    // 슬롯을 채울 때는 DB에 쓰지 않고 폼 값만 들고 있다가, 빌드를 최종 저장할 때
+    // 비로소 각 슬롯의 아이템을 실제로 생성한다 — 도중에 취소하면 아무것도 안 남는다.
+    for (const s of BUILD_SLOTS) {
+      const slot = draft.slots[s.key];
+      if (slot && slot.payload && !slot.itemId) {
+        const created = await saveCustomItem(slot.payload);
+        if (!created) return null;
+        slot.itemId = created.id;
+        delete slot.payload;
+      }
+    }
     const payload = { name: draft.name, skill1: draft.skill1 || null, skill2: draft.skill2 || null, shared: !!draft.shared };
     BUILD_SLOTS.forEach((s) => { payload[s.key + "_id"] = draft.slots[s.key] ? draft.slots[s.key].itemId : null; });
     const { data, error } = draft.id
@@ -2294,10 +2305,8 @@ const supabase = createClient(
         gearMod: modInput ? modInput.value.trim() : null
       };
       if (buildReturnSlot && !editRow) {
-        const created = await saveCustomItem({ category: savedCat, ...payload });
-        if (!created) return;
-        await loadCustomItems();
-        buildDraft.slots[buildReturnSlot] = { itemId: created.id, name: created.name };
+        // 빌드 슬롯은 "빌드 저장"을 눌러야 실제로 DB에 생성된다 — 여기서는 폼 값만 임시로 들고 있는다.
+        buildDraft.slots[buildReturnSlot] = { payload: { category: savedCat, ...payload }, name };
         buildReturnSlot = null;
         createGroup = "빌드";
         renderCreatePanel();
