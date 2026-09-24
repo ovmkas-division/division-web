@@ -533,6 +533,10 @@
     font: inherit; font-size: 1rem;
   }
   .fcard-grid-scroll { align-content: flex-start; }
+  .fcard-grid-build { display: grid; gap: 10px; width: 100%; max-width: 620px; }
+  .fcard-grid-build.cols-3 { grid-template-columns: repeat(3, 1fr); }
+  .fcard-grid-build.cols-2 { grid-template-columns: repeat(2, 1fr); }
+  .fcard-grid-build .fcard { width: 100%; min-width: 0; }
   .fcard-sm { min-width: 0; padding: 10px 16px; font-size: .95rem; }
   .fcreate-empty { color: var(--muted); font-size: .9rem; }
   .fcreate-setinfo { width: 100%; max-width: 620px; margin-top: 8px; padding: 14px 16px; background: var(--void); border: 1px solid var(--line); text-align: left; }
@@ -2174,7 +2178,7 @@ const supabase = createClient(
     center.appendChild(labeledField("빌드명", nameInput));
 
     BUILD_SLOT_ROWS.forEach((keys) => {
-      const row = el("div", "fcard-grid fcard-grid-build");
+      const row = el("div", "fcard-grid-build cols-" + keys.length);
       keys.forEach((key) => {
         const s = BUILD_SLOTS.find((x) => x.key === key);
         const filled = buildDraft.slots[s.key];
