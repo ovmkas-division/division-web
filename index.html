@@ -736,7 +736,6 @@
   <div id="view-farm" class="view" hidden>
     <div class="fcreate-toggle">
       <button id="farm-create-btn" class="fchip" type="button">+ 항목 생성</button>
-      <button id="farm-select-btn" class="fchip" type="button">선택 삭제</button>
     </div>
     <div id="farm-create" class="fcreate" hidden></div>
     <div id="farm-chips"></div>
@@ -1487,8 +1486,14 @@ const supabase = createClient(
     return data;
   }
 
-  async function deleteBuild(id) {
-    const { error } = await supabase.from("farm_builds").delete().eq("id", id);
+  async function deleteBuild(b) {
+    // 빌드에 연결된 무기/방어구 항목들도 같이 지운다 — 빌드 밖에서 따로 살아남지 않게.
+    const itemIds = BUILD_SLOTS.map((s) => b[s.key + "_id"]).filter(Boolean);
+    if (itemIds.length) {
+      const { error: itemErr } = await supabase.from("farm_custom_items").delete().in("id", itemIds);
+      if (itemErr) console.error(itemErr);
+    }
+    const { error } = await supabase.from("farm_builds").delete().eq("id", b.id);
     if (error) console.error(error);
   }
 
@@ -1594,8 +1599,9 @@ const supabase = createClient(
         delBtn.type = "button";
         delBtn.addEventListener("click", async (e) => {
           e.preventDefault();
-          if (!confirm(`"${b.name}" 빌드를 삭제할까요?`)) return;
-          await deleteBuild(b.id);
+          if (!confirm(`"${b.name}" 빌드를 삭제할까요? 연결된 무기/방어구 항목도 함께 삭제됩니다.`)) return;
+          await deleteBuild(b);
+          await loadCustomItems();
           await loadBuilds();
           renderFarmList();
         });
@@ -1609,18 +1615,23 @@ const supabase = createClient(
     if (!buildsToShow.length) list.appendChild(el("li", "empty", "등록된 빌드가 없습니다."));
   }
 
-  function syncSelectBtn() {
-    const btn = $("farm-select-btn");
-    btn.textContent = deleteMode ? "선택 취소" : "선택 삭제";
-    btn.setAttribute("aria-pressed", String(deleteMode));
-  }
-
   function renderBulkBar() {
     const bar = $("farm-bulk");
     bar.replaceChildren();
-    bar.hidden = !deleteMode;
-    $("farm-list").style.paddingBottom = deleteMode ? "70px" : "";
-    if (!deleteMode) return;
+    // 항목 생성 화면에서는 선택삭제가 의미 없으니 리스트를 볼 때만 보여준다.
+    bar.hidden = createOpen;
+    $("farm-list").style.paddingBottom = createOpen ? "" : "70px";
+    if (createOpen) return;
+    if (!deleteMode) {
+      const startBtn = el("button", "flink", "선택 삭제");
+      startBtn.type = "button";
+      startBtn.addEventListener("click", () => {
+        deleteMode = true;
+        renderFarmList();
+      });
+      bar.appendChild(startBtn);
+      return;
+    }
     bar.appendChild(el("span", "", `${selectedForDelete.size}개 선택됨`));
     const delBtn = el("button", "flink flink-danger", "선택 삭제");
     delBtn.type = "button";
@@ -1631,7 +1642,6 @@ const supabase = createClient(
       await Promise.all([...selectedForDelete].map((id) => deleteCustomItem(id)));
       selectedForDelete.clear();
       deleteMode = false;
-      syncSelectBtn();
       await loadCustomItems();
       renderFarmChips();
     });
@@ -1641,8 +1651,7 @@ const supabase = createClient(
     cancelBtn.addEventListener("click", () => {
       deleteMode = false;
       selectedForDelete.clear();
-      syncSelectBtn();
-      renderFarmChips();
+      renderFarmList();
     });
     bar.appendChild(cancelBtn);
   }
@@ -1908,6 +1917,8 @@ const supabase = createClient(
     $("farm-create-btn").textContent = createOpen ? "취소" : "+ 항목 생성";
     $("farm-chips").hidden = createOpen;
     $("farm-list").hidden = createOpen;
+    if (createOpen) { deleteMode = false; selectedForDelete.clear(); }
+    renderBulkBar();
     if (!createOpen) return;
 
     const toolbar = el("div", "farm-toolbar farm-toolbar-inline");
@@ -2538,12 +2549,6 @@ const supabase = createClient(
       if (createOpen) { closeCreatePanel(); return; }
       createOpen = true;
       renderCreatePanel();
-    });
-    $("farm-select-btn").addEventListener("click", () => {
-      deleteMode = !deleteMode;
-      selectedForDelete.clear();
-      syncSelectBtn();
-      renderFarmList();
     });
   }
 
