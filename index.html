@@ -1396,6 +1396,18 @@ const supabase = createClient(
   let builds = [];
   let buildNameByItemId = {}; // farm_custom_items.id -> 그 아이템이 포함된 빌드명 (표시용, "적용 빌드" 태그)
 
+  // 스킬 카탈로그 (skills 테이블) — 카테고리 한국어명별로 세부 종류 목록을 묶어 둔다
+  let skillOptions = {};
+
+  async function loadSkills() {
+    const { data, error } = await supabase.from("skills").select("category_ko, name_ko").order("id");
+    if (error) { console.error(error); return; }
+    skillOptions = {};
+    data.forEach((s) => {
+      (skillOptions[s.category_ko] || (skillOptions[s.category_ko] = [])).push(s.name_ko);
+    });
+  }
+
   async function loadBuilds() {
     const { data, error } = await supabase.from("farm_builds").select("*");
     if (error) { console.error(error); return; }
@@ -1677,6 +1689,8 @@ const supabase = createClient(
   let editingId = null;        // farm_custom_items.id when editing, null when creating
   let buildDraft = null;       // 빌드 작성 중 임시 상태: { id, name, skill1, skill2, shared, slots:{key:{itemId,name}} }
   let buildReturnSlot = null;  // 빌드의 특정 슬롯을 채우러 일반 항목생성 플로우에 들어온 경우 그 슬롯 key
+  let buildSkillSlot = null;   // "skill1"|"skill2" — 스킬 피커가 열려있는 경우 그 슬롯 key
+  let skillPickCategory = null; // 스킬 피커 1단계(카테고리)에서 고른 카테고리, null이면 카테고리 선택 화면
 
   const formatAttr = (a) => `${a.num >= 0 ? "+" : ""}${a.num}${a.unit || ""} ${a.type}`;
 
@@ -1732,6 +1746,8 @@ const supabase = createClient(
     editingId = null;
     buildDraft = null;
     buildReturnSlot = null;
+    buildSkillSlot = null;
+    skillPickCategory = null;
     renderCreatePanel();
   }
 
@@ -1800,7 +1816,11 @@ const supabase = createClient(
     toolbar.appendChild(listBtn);
     box.appendChild(toolbar);
 
-    if (createGroup === "빌드") { renderBuildEditor(box); return; }
+    if (createGroup === "빌드") {
+      if (buildSkillSlot) { renderSkillPicker(box); return; }
+      renderBuildEditor(box);
+      return;
+    }
 
     if (!createGroup) {
       const center = el("div", "fcreate-center");
@@ -2197,17 +2217,16 @@ const supabase = createClient(
       center.appendChild(row);
     });
 
-    const skill1Input = document.createElement("input");
-    skill1Input.type = "text";
-    skill1Input.value = buildDraft.skill1;
-    skill1Input.addEventListener("input", () => { buildDraft.skill1 = skill1Input.value; });
-    center.appendChild(labeledField("스킬1", skill1Input));
-
-    const skill2Input = document.createElement("input");
-    skill2Input.type = "text";
-    skill2Input.value = buildDraft.skill2;
-    skill2Input.addEventListener("input", () => { buildDraft.skill2 = skill2Input.value; });
-    center.appendChild(labeledField("스킬2", skill2Input));
+    const skillRow = el("div", "fcard-grid-build cols-2");
+    ["skill1", "skill2"].forEach((key, i) => {
+      const label = i === 0 ? "스킬1" : "스킬2";
+      const filled = buildDraft[key];
+      const b = el("button", "fcard fcard-sm", filled ? `${label}: ${filled}` : label);
+      b.type = "button";
+      b.addEventListener("click", () => { buildSkillSlot = key; skillPickCategory = null; renderCreatePanel(); });
+      skillRow.appendChild(b);
+    });
+    center.appendChild(skillRow);
 
     const shareRow = el("label", "fcreate-share");
     const shareInput = document.createElement("input");
@@ -2238,6 +2257,43 @@ const supabase = createClient(
     box.appendChild(center);
   }
 
+  function renderSkillPicker(box) {
+    if (!skillPickCategory) {
+      box.appendChild(pickerHeader(() => { buildSkillSlot = null; renderCreatePanel(); }));
+      const center = el("div", "fcreate-center");
+      center.appendChild(el("div", "fcreate-intro", "스킬 종류를 선택하세요"));
+      const grid = el("div", "fcard-grid");
+      Object.keys(skillOptions).forEach((catKo) => {
+        const b = el("button", "fcard fcard-sm", catKo);
+        b.type = "button";
+        b.addEventListener("click", () => { skillPickCategory = catKo; renderCreatePanel(); });
+        grid.appendChild(b);
+      });
+      if (!grid.children.length) grid.appendChild(el("span", "fcreate-empty", "스킬 목록을 불러오지 못했습니다."));
+      center.appendChild(grid);
+      box.appendChild(center);
+      return;
+    }
+
+    box.appendChild(pickerHeader(() => { skillPickCategory = null; renderCreatePanel(); }));
+    const center = el("div", "fcreate-center");
+    center.appendChild(el("div", "fcreate-intro", `${skillPickCategory} 종류를 선택하세요`));
+    const grid = el("div", "fcard-grid");
+    (skillOptions[skillPickCategory] || []).forEach((name) => {
+      const b = el("button", "fcard fcard-sm", name);
+      b.type = "button";
+      b.addEventListener("click", () => {
+        buildDraft[buildSkillSlot] = name;
+        buildSkillSlot = null;
+        skillPickCategory = null;
+        renderCreatePanel();
+      });
+      grid.appendChild(b);
+    });
+    center.appendChild(grid);
+    box.appendChild(center);
+  }
+
   function setView(v) {
     const farmOn = v === "farm";
     closeSheet();
@@ -2262,6 +2318,7 @@ const supabase = createClient(
     await loadGearExotic();
     await loadSetPieces();
     await loadBuilds();
+    await loadSkills();
     buildSearchIndex();
     $("tab-loot").addEventListener("click", () => setView("loot"));
     $("tab-farm").addEventListener("click", () => setView("farm"));
