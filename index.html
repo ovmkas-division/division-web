@@ -475,6 +475,8 @@
   .flink:hover { color: var(--text); }
   .flink-danger:hover { color: var(--bad); }
 
+  .fselect-wrap { display: flex; justify-content: flex-end; margin: 14px 0 -4px; }
+  .fselect-wrap[hidden] { display: none; }
   .fbulk {
     display: flex; align-items: center; gap: 10px; margin: 12px 0; padding: 10px 12px;
     background: var(--deck); border: 1px solid var(--shd); font-size: .85rem;
@@ -742,6 +744,9 @@
     </div>
     <div id="farm-create" class="fcreate" hidden></div>
     <div id="farm-chips"></div>
+    <div id="farm-select-wrap" class="fselect-wrap">
+      <button id="farm-select-btn" class="fchip" type="button">선택 삭제</button>
+    </div>
     <div id="farm-bulk" class="fbulk" hidden></div>
     <ul id="farm-list" class="flist"></ul>
   </div>
@@ -1618,24 +1623,21 @@ const supabase = createClient(
     if (!buildsToShow.length) list.appendChild(el("li", "empty", "등록된 빌드가 없습니다."));
   }
 
+  function syncSelectBtn() {
+    const btn = $("farm-select-btn");
+    btn.hidden = createOpen;
+    btn.textContent = deleteMode ? "선택 취소" : "선택 삭제";
+    btn.setAttribute("aria-pressed", String(deleteMode));
+  }
+
   function renderBulkBar() {
     const bar = $("farm-bulk");
     bar.replaceChildren();
-    // 항목 생성 화면에서는 선택삭제가 의미 없으니 리스트를 볼 때만 보여준다.
-    bar.hidden = createOpen;
+    syncSelectBtn();
+    bar.hidden = createOpen || !deleteMode;
     bar.classList.toggle("fbulk-fixed", !createOpen && deleteMode);
     $("farm-list").style.paddingBottom = !createOpen && deleteMode ? "70px" : "";
-    if (createOpen) return;
-    if (!deleteMode) {
-      const startBtn = el("button", "flink", "선택 삭제");
-      startBtn.type = "button";
-      startBtn.addEventListener("click", () => {
-        deleteMode = true;
-        renderFarmList();
-      });
-      bar.appendChild(startBtn);
-      return;
-    }
+    if (createOpen || !deleteMode) return;
     bar.appendChild(el("span", "", `${selectedForDelete.size}개 선택됨`));
     const delBtn = el("button", "flink flink-danger", "선택 삭제");
     delBtn.type = "button";
@@ -2553,6 +2555,11 @@ const supabase = createClient(
       if (createOpen) { closeCreatePanel(); return; }
       createOpen = true;
       renderCreatePanel();
+    });
+    $("farm-select-btn").addEventListener("click", () => {
+      deleteMode = !deleteMode;
+      selectedForDelete.clear();
+      renderFarmList();
     });
   }
 
