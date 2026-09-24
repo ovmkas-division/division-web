@@ -476,14 +476,17 @@
   .flink-danger:hover { color: var(--bad); }
 
   .fbulk {
-    display: flex; align-items: center; gap: 10px; padding: 12px 14px;
+    display: flex; align-items: center; gap: 10px; margin: 12px 0; padding: 10px 12px;
     background: var(--deck); border: 1px solid var(--shd); font-size: .85rem;
-    position: fixed; left: 0; right: 0; bottom: 0; max-width: 800px; margin: 0 auto;
-    box-shadow: 0 -4px 16px rgba(0, 0, 0, .45); z-index: 5;
-    padding-bottom: max(12px, env(safe-area-inset-bottom));
   }
   .fbulk[hidden] { display: none; }
   .fbulk span { flex: 1; color: var(--text); }
+  /* 선택 모드로 들어가면(개수/삭제/취소 표시 중) 스크롤해도 계속 보이게 하단에 고정한다 */
+  .fbulk.fbulk-fixed {
+    position: fixed; left: 0; right: 0; bottom: 0; max-width: 800px; margin: 0 auto;
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, .45); z-index: 5;
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+  }
   .fitem-select { margin-right: 10px; }
 
   /* 파밍 항목 생성 폼 */
@@ -1620,7 +1623,8 @@ const supabase = createClient(
     bar.replaceChildren();
     // 항목 생성 화면에서는 선택삭제가 의미 없으니 리스트를 볼 때만 보여준다.
     bar.hidden = createOpen;
-    $("farm-list").style.paddingBottom = createOpen ? "" : "70px";
+    bar.classList.toggle("fbulk-fixed", !createOpen && deleteMode);
+    $("farm-list").style.paddingBottom = !createOpen && deleteMode ? "70px" : "";
     if (createOpen) return;
     if (!deleteMode) {
       const startBtn = el("button", "flink", "선택 삭제");
