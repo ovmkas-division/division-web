@@ -1251,7 +1251,7 @@ const supabase = createClient(
       (row.main_attrs || []).forEach((v) => rows.push(["주속성", v]));
       (row.sub_attrs || []).forEach((v) => rows.push(["보조속성", v]));
       const isOwn = !!session && row.user_id === session.user.id;
-      const item = { id: "custom-" + row.id, dbId: row.id, custom: true, isOwn, shared: row.shared, ko: row.name, kind: row.kind, rows, fx: row.special_effect || undefined };
+      const item = { id: "custom-" + row.id, dbId: row.id, custom: true, isOwn, shared: row.shared, ko: row.name, kind: row.kind, rows, fx: row.special_effect || undefined, mod: row.gear_mod || undefined };
       (customItems[row.category] || (customItems[row.category] = [])).push(item);
     });
   }
@@ -1361,17 +1361,44 @@ const supabase = createClient(
   // 세트별 부위 아이템명 (gear_set_pieces) — "set-<en 정규화>" id로 묶는다 (FARM_CATS 세트 id와 동일한 규칙)
   const SLOT_LABELS = { mask: "마스크", chest: "방탄복", backpack: "백팩", gloves: "장갑", holster: "권총집", kneepads: "무릎보호대" };
 
-  // 나무위키 "보호장구 속성 테이블" 기준 — 핵심 속성 3종 + 카테고리별 비핵심 속성
-  const CORE_ATTRS = [
-    { label: "무기 대미지", color: "red" },
-    { label: "방어도", color: "blue" },
-    { label: "스킬 등급", color: "yellow" }
-  ];
-  const SECONDARY_ATTR_GROUPS = [
-    { label: "무기", color: "red", items: ["무기 조작력", "치명타 확률", "치명타 대미지", "헤드샷 대미지"] },
-    { label: "방어도", color: "blue", items: ["방어도 재생", "상태이상 저항", "생명력", "폭발물 저항"] },
-    { label: "스킬", color: "yellow", items: ["스킬 대미지", "스킬 회복", "스킬 가속", "상태이상 효과"] }
-  ];
+  // 무기/방어구 속성 카탈로그 — 전부 DB(gear_core_attrs/gear_secondary_attrs/
+  // weapon_core_attrs/weapon_secondary_attrs/gear_mods)에서 불러온다.
+  // 무기와 방어구는 나무위키상 속성 체계 자체가 다르다:
+  //   방어구: 핵심속성 3종 중 1개 택1 + 카테고리별 비핵심속성(무기/방어도/스킬) + (마스크·방탄복·백팩만) 개조
+  //   무기: 무기군마다 정해진 핵심속성 1~2개(무기군 대미지 공용 + 무기군별 고유 스탯) + 공용 비핵심속성 13종
+  let gearCoreAttrs = [];       // [{label, color}]
+  let gearSecondaryGroups = []; // [{label, color, items:[name,...]}]
+  let weaponCoreAttrs = {};     // { weapon_group: [name,...] }
+  let weaponSecondaryAttrs = []; // [name,...]
+  let gearModOptions = [];      // [name,...] — 개조 입력칸 자동완성용
+
+  async function loadAttrCatalogs() {
+    const [gc, gs, wc, ws, gm] = await Promise.all([
+      supabase.from("gear_core_attrs").select("name_ko, color").order("id"),
+      supabase.from("gear_secondary_attrs").select("category_ko, color, name_ko").order("id"),
+      supabase.from("weapon_core_attrs").select("weapon_group, name_ko").order("id"),
+      supabase.from("weapon_secondary_attrs").select("name_ko").order("id"),
+      supabase.from("gear_mods").select("name_ko").order("id")
+    ]);
+    if (gc.error) console.error(gc.error); else gearCoreAttrs = gc.data.map((r) => ({ label: r.name_ko, color: r.color }));
+    if (gs.error) console.error(gs.error);
+    else {
+      gearSecondaryGroups = [];
+      gs.data.forEach((r) => {
+        let g = gearSecondaryGroups.find((x) => x.label === r.category_ko);
+        if (!g) { g = { label: r.category_ko, color: r.color, items: [] }; gearSecondaryGroups.push(g); }
+        g.items.push(r.name_ko);
+      });
+    }
+    if (wc.error) console.error(wc.error);
+    else {
+      weaponCoreAttrs = {};
+      wc.data.forEach((r) => { (weaponCoreAttrs[r.weapon_group] || (weaponCoreAttrs[r.weapon_group] = [])).push(r.name_ko); });
+    }
+    if (ws.error) console.error(ws.error); else weaponSecondaryAttrs = ws.data.map((r) => r.name_ko);
+    if (gm.error) console.error(gm.error); else gearModOptions = gm.data.map((r) => r.name_ko);
+  }
+
   let setPieces = {};
 
   // 빌드 슬롯 정의 — weapon 타입은 부위 선택부터(gear는 부위가 고정이라 바로 브랜드 픽커로)
@@ -1479,24 +1506,26 @@ const supabase = createClient(
     });
   }
 
-  async function saveCustomItem({ category, kind, name, mainAttrs, subAttrs, effect, shared }) {
+  async function saveCustomItem({ category, kind, name, mainAttrs, subAttrs, effect, shared, gearMod }) {
     const { data, error } = await supabase.from("farm_custom_items").insert({
       category, kind, name,
       main_attrs: mainAttrs,
       sub_attrs: subAttrs,
       special_effect: effect || null,
+      gear_mod: gearMod || null,
       shared: !!shared
     }).select().single();
     if (error) { console.error(error); return null; }
     return data;
   }
 
-  async function updateCustomItem(id, { kind, name, mainAttrs, subAttrs, effect, shared }) {
+  async function updateCustomItem(id, { kind, name, mainAttrs, subAttrs, effect, shared, gearMod }) {
     const { error } = await supabase.from("farm_custom_items").update({
       kind, name,
       main_attrs: mainAttrs,
       sub_attrs: subAttrs,
       special_effect: effect || null,
+      gear_mod: gearMod || null,
       shared: !!shared
     }).eq("id", id);
     if (error) { console.error(error); return false; }
@@ -1608,6 +1637,7 @@ const supabase = createClient(
         body.appendChild(p);
       });
       if (it.fx) body.appendChild(el("p", "fget", it.fx));
+      if (it.mod) body.appendChild(el("p", "ffx", `개조: ${it.mod}`));
       if (it.custom && it.isOwn) {
         const actions = el("div", "fitem-actions");
         const editBtn = el("button", "flink", "수정");
@@ -1696,6 +1726,7 @@ const supabase = createClient(
   let createModelKind = null;      // 픽커에서 고른 항목의 고정 등급 (네임드/특급), null이면 기본값(일반) 사용
   let createModelEffect = null;    // 픽커에서 고른 항목의 고정 특수효과 텍스트 (네임드/특급 무기는 효과가 정해져 있음)
   let createFixedAttrs = [];       // 네임드 방어구의 고유 속성(고정, 수정 불가) — 보조속성 칸에 잠긴 채로 채워짐
+  let createPieceSlot = null;      // 세트 부위 선택 시의 실제 슬롯(mask/chest/backpack/gloves/holster/kneepads) — 개조 가능 여부 판단용
   let editingId = null;        // farm_custom_items.id when editing, null when creating
   let buildDraft = null;       // 빌드 작성 중 임시 상태: { id, name, skill1, skill2, shared, slots:{key:{itemId,name}} }
   let buildReturnSlot = null;  // 빌드의 특정 슬롯을 채우러 일반 항목생성 플로우에 들어온 경우 그 슬롯 key
@@ -1752,7 +1783,7 @@ const supabase = createClient(
     createCat = null;
     createModelName = undefined;
     createModelKind = null;
-    createModelEffect = null; createFixedAttrs = [];
+    createModelEffect = null; createFixedAttrs = []; createPieceSlot = null;
     editingId = null;
     buildDraft = null;
     buildReturnSlot = null;
@@ -1767,7 +1798,11 @@ const supabase = createClient(
     createCat = row.category;
     createModelName = undefined;
     createModelKind = null;
-    createModelEffect = null; createFixedAttrs = [];
+    createModelEffect = null; createFixedAttrs = []; createPieceSlot = null;
+    if (createGroup === "세트") {
+      const piece = (setPieces[row.category] || []).find((p) => p.name_ko === row.name);
+      if (piece) createPieceSlot = piece.slot;
+    }
     editingId = row.id;
     createOpen = true;
     renderCreatePanel();
@@ -1803,7 +1838,7 @@ const supabase = createClient(
         buildReturnSlot = null;
         createGroup = "빌드";
         createCat = null;
-        createModelName = undefined; createModelKind = null; createModelEffect = null; createFixedAttrs = [];
+        createModelName = undefined; createModelKind = null; createModelEffect = null; createFixedAttrs = []; createPieceSlot = null;
         editingId = null;
         renderCreatePanel();
         return;
@@ -1812,7 +1847,7 @@ const supabase = createClient(
       createCat = null;
       createModelName = undefined;
       createModelKind = null;
-      createModelEffect = null; createFixedAttrs = [];
+      createModelEffect = null; createFixedAttrs = []; createPieceSlot = null;
       editingId = null;
       buildDraft = null;
       renderCreatePanel();
@@ -1965,7 +2000,7 @@ const supabase = createClient(
           b.type = "button";
           const bonus = gearSetForCat && (p.slot === "chest" ? gearSetForCat.chest : p.slot === "backpack" ? gearSetForCat.pack : null);
           const effect = bonus ? `${bonus.n}: ${bonus.t}` : null;
-          b.addEventListener("click", () => pickModel(p.name_ko, "세트", effect));
+          b.addEventListener("click", () => { createPieceSlot = p.slot; pickModel(p.name_ko, "세트", effect); });
           grid.appendChild(b);
         });
       }
@@ -2033,7 +2068,7 @@ const supabase = createClient(
     const form = el("form", "fcreate-form");
 
     form.appendChild(pickerHeader(() => {
-      if (!editingId) { createModelName = undefined; createModelKind = null; createModelEffect = null; createFixedAttrs = []; }
+      if (!editingId) { createModelName = undefined; createModelKind = null; createModelEffect = null; createFixedAttrs = []; createPieceSlot = null; }
       else { createCat = null; editingId = null; }
       renderCreatePanel();
     }));
@@ -2063,24 +2098,46 @@ const supabase = createClient(
     const nameLabel = createGroup === "무기" ? "무기명" : createGroup === "보호장구" ? "방어구명" : "아이템명";
     form.appendChild(labeledField(nameLabel, nameInput));
 
-    // 주속성: 무기 대미지/방어도/스킬 등급 중 하나만 고른다 (라디오 방식)
-    let mainAttrSelected = editRow && editRow.main_attrs && editRow.main_attrs[0] ? editRow.main_attrs[0] : null;
+    // 무기와 방어구는 나무위키상 속성 체계 자체가 다르다.
+    //   방어구/세트: 핵심속성 3종 중 1개(라디오) + 카테고리별(무기/방어도/스킬) 비핵심속성
+    //   무기: 무기군별로 정해진 핵심속성 1~2개(다중 선택) + 공용 비핵심속성 13종(카테고리 구분 없음)
+    const isWeaponGroup = createGroup === "무기";
+    const modSlot = isWeaponGroup ? null
+      : createGroup === "보호장구" ? ({ mask: "mask", chest: "chest", pack: "backpack" }[createCat] || null)
+      : createGroup === "세트" ? (["mask", "chest", "backpack"].includes(createPieceSlot) ? createPieceSlot : null)
+      : null;
+
+    // 주속성
+    const mainAttrsSelected = new Set(editRow && editRow.main_attrs ? editRow.main_attrs : []);
+    const mainOptions = isWeaponGroup
+      ? (weaponCoreAttrs[createCat] || []).map((n) => ({ label: n, color: "red" }))
+      : gearCoreAttrs;
     const mainWrap = el("div", "fattr-row");
-    CORE_ATTRS.forEach((a) => {
-      const b = el("button", "fattr-btn fattr-" + a.color, a.label);
-      b.type = "button";
-      b.setAttribute("aria-pressed", String(mainAttrSelected === a.label));
-      b.addEventListener("click", () => {
-        mainAttrSelected = mainAttrSelected === a.label ? null : a.label;
-        mainWrap.querySelectorAll(".fattr-btn").forEach((n) => n.setAttribute("aria-pressed", String(n.textContent === mainAttrSelected)));
+    const renderMainButtons = () => {
+      mainWrap.replaceChildren();
+      mainOptions.forEach((a) => {
+        const b = el("button", "fattr-btn fattr-" + a.color, a.label);
+        b.type = "button";
+        b.setAttribute("aria-pressed", String(mainAttrsSelected.has(a.label)));
+        b.addEventListener("click", () => {
+          if (isWeaponGroup) {
+            if (mainAttrsSelected.has(a.label)) mainAttrsSelected.delete(a.label); else mainAttrsSelected.add(a.label);
+          } else {
+            const already = mainAttrsSelected.has(a.label);
+            mainAttrsSelected.clear();
+            if (!already) mainAttrsSelected.add(a.label);
+          }
+          renderMainButtons();
+        });
+        mainWrap.appendChild(b);
       });
-      mainWrap.appendChild(b);
-    });
+    };
+    renderMainButtons();
     form.appendChild(labeledField("주속성", mainWrap));
 
-    // 보조속성: 카테고리(무기/방어도/스킬)를 먼저 고르고, 그 안에서 세부 속성을 고른다.
+    // 보조속성: 방어구/세트는 카테고리(무기/방어도/스킬) 탭 + 색상, 무기는 카테고리 구분 없는 단일 목록.
     // 네임드 방어구를 고른 경우의 고정 속성은 그대로 잠긴 태그로 위에 따로 보여준다.
-    const allSecondary = SECONDARY_ATTR_GROUPS.flatMap((g) => g.items);
+    const allSecondary = isWeaponGroup ? weaponSecondaryAttrs.slice() : gearSecondaryGroups.flatMap((g) => g.items);
     const lockedSubAttrs = !editRow ? createFixedAttrs.slice() : [];
     const subAttrsSelected = new Set(
       editRow && editRow.sub_attrs ? editRow.sub_attrs.filter((v) => allSecondary.includes(v)) : []
@@ -2095,23 +2152,10 @@ const supabase = createClient(
       lockedSubAttrs.concat(legacySubAttrs).forEach((v) => lockedRow.appendChild(el("span", "ftag ftag-locked", v)));
       subBody.appendChild(lockedRow);
     }
-    let activeSubGroup = SECONDARY_ATTR_GROUPS[0].label;
-    const subPicker = el("div", "");
-    const renderSubPicker = () => {
-      subPicker.replaceChildren();
-      const tabRow = el("div", "fattr-row");
-      SECONDARY_ATTR_GROUPS.forEach((g) => {
-        const b = el("button", "fattr-tab fattr-" + g.color, g.label);
-        b.type = "button";
-        b.setAttribute("aria-pressed", String(activeSubGroup === g.label));
-        b.addEventListener("click", () => { activeSubGroup = g.label; renderSubPicker(); });
-        tabRow.appendChild(b);
-      });
-      subPicker.appendChild(tabRow);
-      const group = SECONDARY_ATTR_GROUPS.find((g) => g.label === activeSubGroup);
+    if (isWeaponGroup) {
       const itemRow = el("div", "fattr-row");
-      group.items.forEach((label) => {
-        const b = el("button", "fattr-btn fattr-" + group.color, label);
+      weaponSecondaryAttrs.forEach((label) => {
+        const b = el("button", "fattr-btn fattr-red", label);
         b.type = "button";
         b.setAttribute("aria-pressed", String(subAttrsSelected.has(label)));
         b.addEventListener("click", () => {
@@ -2120,11 +2164,59 @@ const supabase = createClient(
         });
         itemRow.appendChild(b);
       });
-      subPicker.appendChild(itemRow);
-    };
-    renderSubPicker();
-    subBody.appendChild(subPicker);
+      subBody.appendChild(itemRow);
+    } else {
+      let activeSubGroup = gearSecondaryGroups[0] ? gearSecondaryGroups[0].label : null;
+      const subPicker = el("div", "");
+      const renderSubPicker = () => {
+        subPicker.replaceChildren();
+        const tabRow = el("div", "fattr-row");
+        gearSecondaryGroups.forEach((g) => {
+          const b = el("button", "fattr-tab fattr-" + g.color, g.label);
+          b.type = "button";
+          b.setAttribute("aria-pressed", String(activeSubGroup === g.label));
+          b.addEventListener("click", () => { activeSubGroup = g.label; renderSubPicker(); });
+          tabRow.appendChild(b);
+        });
+        subPicker.appendChild(tabRow);
+        const group = gearSecondaryGroups.find((g) => g.label === activeSubGroup);
+        const itemRow = el("div", "fattr-row");
+        (group ? group.items : []).forEach((label) => {
+          const b = el("button", "fattr-btn fattr-" + group.color, label);
+          b.type = "button";
+          b.setAttribute("aria-pressed", String(subAttrsSelected.has(label)));
+          b.addEventListener("click", () => {
+            if (subAttrsSelected.has(label)) subAttrsSelected.delete(label); else subAttrsSelected.add(label);
+            b.setAttribute("aria-pressed", String(subAttrsSelected.has(label)));
+          });
+          itemRow.appendChild(b);
+        });
+        subPicker.appendChild(itemRow);
+      };
+      renderSubPicker();
+      subBody.appendChild(subPicker);
+    }
     form.appendChild(labeledField("보조속성", subBody));
+
+    // 개조: 마스크/방탄복/백팩(세트 포함)만 해당 — 전체 종류가 나무위키에 명확히 정리돼 있지
+    // 않아 고정 목록 대신 자동완성이 붙은 자유 입력으로 처리한다.
+    let modInput = null;
+    if (modSlot) {
+      modInput = document.createElement("input");
+      modInput.type = "text";
+      modInput.setAttribute("list", "mod-options");
+      modInput.placeholder = "개조 부품 이름 (예: 정예 대상 방호도, 직접 입력 가능)";
+      if (editRow) modInput.value = editRow.gear_mod || "";
+      const modList = document.createElement("datalist");
+      modList.id = "mod-options";
+      gearModOptions.forEach((n) => {
+        const opt = document.createElement("option");
+        opt.value = n;
+        modList.appendChild(opt);
+      });
+      form.appendChild(labeledField(`개조 (${SLOT_LABELS[modSlot] || modSlot})`, modInput));
+      form.appendChild(modList);
+    }
 
     const fxInput = document.createElement("input");
     fxInput.type = "text";
@@ -2163,12 +2255,13 @@ const supabase = createClient(
       e.preventDefault();
       const name = nameInput.value.trim();
       if (!name) { nameInput.focus(); return; }
-      const mainAttrs = mainAttrSelected ? [mainAttrSelected] : [];
+      const mainAttrs = [...mainAttrsSelected];
       const subAttrs = lockedSubAttrs.concat(legacySubAttrs, [...subAttrsSelected]);
       const savedCat = createCat;
       const payload = {
         kind: kindVal, name,
-        mainAttrs, subAttrs, effect: fxInput.value.trim(), shared: shareInput.checked
+        mainAttrs, subAttrs, effect: fxInput.value.trim(), shared: shareInput.checked,
+        gearMod: modInput ? modInput.value.trim() : null
       };
       if (buildReturnSlot && !editRow) {
         const created = await saveCustomItem({ category: savedCat, ...payload });
@@ -2217,7 +2310,7 @@ const supabase = createClient(
         b.addEventListener("click", () => {
           buildReturnSlot = s.key;
           editingId = null;
-          createModelName = undefined; createModelKind = null; createModelEffect = null; createFixedAttrs = [];
+          createModelName = undefined; createModelKind = null; createModelEffect = null; createFixedAttrs = []; createPieceSlot = null;
           if (s.type === "weapon") { createGroup = "무기"; createCat = null; }
           else { createGroup = "보호장구"; createCat = s.cat; }
           renderCreatePanel();
@@ -2329,6 +2422,7 @@ const supabase = createClient(
     await loadSetPieces();
     await loadBuilds();
     await loadSkills();
+    await loadAttrCatalogs();
     buildSearchIndex();
     $("tab-loot").addEventListener("click", () => setView("loot"));
     $("tab-farm").addEventListener("click", () => setView("farm"));
