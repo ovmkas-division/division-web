@@ -608,6 +608,8 @@
   .fslot-label { min-width: 84px; align-self: center; }
   .fslot-del { min-width: 44px; border: 1px solid var(--line-hot); background: transparent; color: var(--muted); font-size: 1.1rem; cursor: pointer; }
   .fx-desc { margin: 8px 0 0; color: #c2ccd4; font-size: .9rem; line-height: 1.55; white-space: pre-line; }
+  .fslotcheck { width: 16px; height: 16px; margin: 0 8px 0 0; vertical-align: -2px; accent-color: var(--shd); cursor: pointer; }
+  .ffx.slot-done b, .fdetail-sec.slot-done .fname b { text-decoration: line-through; opacity: .55; }
   .fitem-click { cursor: pointer; }
   .fitem-click:hover { border-color: var(--line-hot); }
   .fset { color: var(--set); font-size: .85rem; }
@@ -1665,7 +1667,7 @@ const supabase = createClient(
     buildsToShow.forEach((b) => {
       const li = el("li", "fitem fitem-click");
       li.addEventListener("click", (e) => {
-        if (e.target.closest("button, a")) return; // 수정/삭제 링크는 그대로 동작
+        if (e.target.closest("button, a, input, label")) return; // 수정/삭제 링크와 체크박스는 그대로 동작
         openBuildDetail(b);
       });
       const body = el("div", "fbody");
@@ -1679,6 +1681,11 @@ const supabase = createClient(
         if (!itemId) return;
         const item = customRawById[itemId];
         const p = el("p", "ffx");
+        if (item) {
+          const chk = slotCheckbox(item, (on) => p.classList.toggle("slot-done", on));
+          p.classList.toggle("slot-done", chk.done);
+          p.appendChild(chk.cb);
+        }
         p.appendChild(document.createTextNode(s.label + ": "));
         p.appendChild(el("b", "", item ? item.name : "(삭제된 항목)"));
         const setNm = item ? setNameOf(item.category) : null;
@@ -2053,6 +2060,22 @@ const supabase = createClient(
     return toolbar;
   }
 
+  // 빌드 안의 항목 체크박스. 일반 목록(파밍 체크리스트)과 같은 키("카테고리|custom-<id>")를 써서 서로 동기화된다.
+  function slotCheckbox(row, onChange) {
+    const key = row.category + "|custom-" + row.id;
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "fslotcheck";
+    cb.checked = !!farmDone[key];
+    cb.setAttribute("aria-label", row.name + " 획득 체크");
+    cb.addEventListener("change", () => {
+      if (cb.checked) farmDone[key] = true; else delete farmDone[key];
+      onChange(cb.checked);
+      toggleFarmDone(key, cb.checked);
+    });
+    return { cb, done: cb.checked };
+  }
+
   // 세트 부품의 카테고리("set-...")에서 세트 이름을 알아낸다. 브랜드 부품은 카테고리에 브랜드가 없어 null.
   function setNameOf(category) {
     if (!category || category.indexOf("set-") !== 0) return null;
@@ -2188,7 +2211,14 @@ const supabase = createClient(
       if (!itemId) return;
       const row = customRawById[itemId];
       const sec = el("div", "fdetail-sec");
-      sec.appendChild(el("p", "fdetail-label", s.label));
+      const lbl = el("p", "fdetail-label", "");
+      if (row) {
+        const chk = slotCheckbox(row, (on) => sec.classList.toggle("slot-done", on));
+        sec.classList.toggle("slot-done", chk.done);
+        lbl.appendChild(chk.cb);
+      }
+      lbl.appendChild(document.createTextNode(s.label));
+      sec.appendChild(lbl);
       sec.appendChild(row ? renderItemDetail(row) : el("p", "ffx", "(삭제된 항목)"));
       wrap.appendChild(sec);
     });
