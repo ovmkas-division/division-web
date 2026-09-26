@@ -1568,6 +1568,12 @@ const supabase = createClient(
       ? await supabase.from("farm_builds").update(payload).eq("id", draft.id).select().single()
       : await supabase.from("farm_builds").insert(payload).select().single();
     if (error) { console.error(error); return null; }
+    // 빌드의 공유 설정을 안의 항목에도 맞춘다 — 항목이 비공개면 친구에게는 "삭제된 항목"으로 보인다
+    const slotItemIds = BUILD_SLOTS.map((s) => draft.slots[s.key] && draft.slots[s.key].itemId).filter(Boolean);
+    if (slotItemIds.length) {
+      const { error: shareErr } = await supabase.from("farm_custom_items").update({ shared: !!draft.shared }).in("id", slotItemIds);
+      if (shareErr) console.error(shareErr);
+    }
     // 슬롯을 다른 항목으로 다시 고른 경우, 빌드에서 빠진 옛 항목은 남지 않게 지운다
     if (draft.orphans && draft.orphans.length) {
       const { error: orphanErr } = await supabase.from("farm_custom_items").delete().in("id", draft.orphans);
