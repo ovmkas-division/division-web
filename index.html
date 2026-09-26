@@ -599,12 +599,14 @@
   .fattr-btn[aria-pressed="true"].fattr-blue, .fattr-tab[aria-pressed="true"].fattr-blue { border-color: #6bb6ff; color: #6bb6ff; background: rgba(107, 182, 255, .12); }
   .fattr-btn[aria-pressed="true"].fattr-yellow, .fattr-tab[aria-pressed="true"].fattr-yellow { border-color: var(--brand); color: var(--brand); background: rgba(242, 181, 68, .12); }
   .fslot-row { display: flex; gap: 8px; align-items: stretch; margin-bottom: 8px; }
+  .fcreate select { width: 100%; min-height: 44px; padding: 8px 12px; background: var(--void); border: 1px solid var(--line-hot); color: var(--text); font: inherit; font-size: 1rem; }
   .fslot-row select { flex: 1; min-width: 0; min-height: 44px; padding: 8px 12px; background: var(--void); border: 1px solid var(--line-hot); color: var(--text); font: inherit; font-size: 1rem; }
   .fslot-row select.fattr-red { border-color: var(--bad); color: var(--bad); }
   .fslot-row select.fattr-blue { border-color: #6bb6ff; color: #6bb6ff; }
   .fslot-row select.fattr-yellow { border-color: var(--brand); color: var(--brand); }
   .fslot-label { min-width: 84px; align-self: center; }
   .fslot-del { min-width: 44px; border: 1px solid var(--line-hot); background: transparent; color: var(--muted); font-size: 1.1rem; cursor: pointer; }
+  .fx-desc { margin: 8px 0 0; color: #c2ccd4; font-size: .9rem; line-height: 1.55; white-space: pre-line; }
   .fslot-add { min-height: 40px; padding: 7px 14px; border: 1px dashed var(--line-hot); background: transparent; color: var(--muted); font-size: .92rem; cursor: pointer; }
   .fslot-add[hidden] { display: none; }
   .ftag-locked { color: var(--text); border-color: var(--shd); background: rgba(255, 106, 0, .12); }
@@ -2498,14 +2500,19 @@ const supabase = createClient(
       const fixedValue = (editRow ? editRow.special_effect : createModelEffect) || "";
       const talents = weaponTalentsByGroup[createCat] || [];
       const holder = el("div", "");
+      // 값은 "이름: 설명" 문자열 — 설명 부분만 아래에 보여준다
+      const descOf = (v) => { const i = v.indexOf(": "); return i < 0 ? "" : v.slice(i + 2).trim(); };
       const renderFx = () => {
         holder.replaceChildren();
+        const desc = el("p", "fx-desc", "");
         if (kindVal === "특급" && fixedValue) {
           const ro = document.createElement("input");
           ro.type = "text";
           ro.readOnly = true;
-          ro.value = fixedValue;
+          ro.value = fixedValue.split(": ")[0];
+          desc.textContent = descOf(fixedValue);
           holder.appendChild(ro);
+          holder.appendChild(desc);
           getFx = () => fixedValue;
           return;
         }
@@ -2528,7 +2535,11 @@ const supabase = createClient(
           sel.appendChild(o);
         }
         sel.value = fixedValue;
+        const showDesc = () => { desc.textContent = descOf(sel.value); };
+        sel.addEventListener("change", showDesc);
+        showDesc();
         holder.appendChild(sel);
+        holder.appendChild(desc);
         getFx = () => sel.value;
       };
       onKindChange = renderFx;
