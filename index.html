@@ -1696,6 +1696,8 @@ const supabase = createClient(
         p.appendChild(el("b", "", item ? item.name : "(삭제된 항목)"));
         const setNm = item ? setNameOf(item.category) : null;
         if (setNm) p.appendChild(el("span", "fset", " · " + setNm));
+        const shBadge = sharedBadge(item);
+        if (shBadge) { p.appendChild(document.createTextNode(" ")); p.appendChild(shBadge); }
         body.appendChild(p);
       });
       if (b.signature) body.appendChild(el("p", "ffx", "시그니처 무기: " + b.signature));
@@ -2066,6 +2068,13 @@ const supabase = createClient(
     return toolbar;
   }
 
+  // 항목의 공유 배지 — 내가 만든 것이면 "공유중", 친구가 공유한 것이면 "공유받음" (일반 목록과 같은 표기)
+  function sharedBadge(row) {
+    if (!row || !row.shared) return null;
+    const own = !row.user_id || (!!session && row.user_id === session.user.id);
+    return el("span", "ftag ftag-shared", own ? "공유중" : "공유받음");
+  }
+
   // 빌드 안의 항목 체크박스. 일반 목록(파밍 체크리스트)과 같은 키("카테고리|custom-<id>")를 써서 서로 동기화된다.
   function slotCheckbox(row, onChange) {
     const key = row.category + "|custom-" + row.id;
@@ -2113,6 +2122,8 @@ const supabase = createClient(
     else if (row.kind === "특급") head.appendChild(el("span", "ftag k-ex", "특급"));
     const setNm = setNameOf(row.category);
     if (setNm) head.appendChild(el("span", "ftag k-set", setNm));
+    const shBadge = sharedBadge(row);
+    if (shBadge) head.appendChild(shBadge);
     wrap.appendChild(head);
     const line = (label, val) => {
       if (!val) return;
