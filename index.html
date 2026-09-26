@@ -608,6 +608,14 @@
   .fslot-label { min-width: 84px; align-self: center; }
   .fslot-del { min-width: 44px; border: 1px solid var(--line-hot); background: transparent; color: var(--muted); font-size: 1.1rem; cursor: pointer; }
   .fx-desc { margin: 8px 0 0; color: #c2ccd4; font-size: .9rem; line-height: 1.55; white-space: pre-line; }
+  .fitem-click { cursor: pointer; }
+  .fitem-click:hover { border-color: var(--line-hot); }
+  .fset { color: var(--set); font-size: .85rem; }
+  .fdetail { width: 100%; max-width: 620px; text-align: left; }
+  .fdetail-sec { margin: 0 0 14px; padding: 0 0 12px; border-bottom: 1px solid var(--line); }
+  .fdetail-sec:last-child { border-bottom: 0; }
+  .fdetail-label { margin: 0 0 4px; color: var(--muted); font-size: .8rem; letter-spacing: .04em; }
+  .fdetail-actions { display: flex; gap: 12px; margin-top: 6px; }
   .fslot-add { min-height: 40px; padding: 7px 14px; border: 1px dashed var(--line-hot); background: transparent; color: var(--muted); font-size: .92rem; cursor: pointer; }
   .fslot-add[hidden] { display: none; }
   .ftag-locked { color: var(--text); border-color: var(--shd); background: rgba(255, 106, 0, .12); }
@@ -1541,10 +1549,14 @@ const supabase = createClient(
     // 비로소 각 슬롯의 아이템을 실제로 생성한다 — 도중에 취소하면 아무것도 안 남는다.
     for (const s of BUILD_SLOTS) {
       const slot = draft.slots[s.key];
-      if (slot && slot.payload && !slot.itemId) {
-        const created = await saveCustomItem(slot.payload);
-        if (!created) return null;
-        slot.itemId = created.id;
+      if (slot && slot.payload) {
+        if (slot.itemId) { // 이미 있는 항목을 수정한 슬롯
+          if (!(await updateCustomItem(slot.itemId, slot.payload))) return null;
+        } else {
+          const created = await saveCustomItem(slot.payload);
+          if (!created) return null;
+          slot.itemId = created.id;
+        }
         delete slot.payload;
       }
     }
@@ -1554,6 +1566,12 @@ const supabase = createClient(
       ? await supabase.from("farm_builds").update(payload).eq("id", draft.id).select().single()
       : await supabase.from("farm_builds").insert(payload).select().single();
     if (error) { console.error(error); return null; }
+    // 슬롯을 다른 항목으로 다시 고른 경우, 빌드에서 빠진 옛 항목은 남지 않게 지운다
+    if (draft.orphans && draft.orphans.length) {
+      const { error: orphanErr } = await supabase.from("farm_custom_items").delete().in("id", draft.orphans);
+      if (orphanErr) console.error(orphanErr);
+      draft.orphans = [];
+    }
     return data;
   }
 
@@ -1645,7 +1663,11 @@ const supabase = createClient(
 
   function renderBuildItems(list, buildsToShow) {
     buildsToShow.forEach((b) => {
-      const li = el("li", "fitem");
+      const li = el("li", "fitem fitem-click");
+      li.addEventListener("click", (e) => {
+        if (e.target.closest("button, a")) return; // 수정/삭제 링크는 그대로 동작
+        openBuildDetail(b);
+      });
       const body = el("div", "fbody");
       const name = el("div", "fname");
       name.appendChild(el("b", "", b.name));
@@ -1659,6 +1681,8 @@ const supabase = createClient(
         const p = el("p", "ffx");
         p.appendChild(document.createTextNode(s.label + ": "));
         p.appendChild(el("b", "", item ? item.name : "(삭제된 항목)"));
+        const setNm = item ? setNameOf(item.category) : null;
+        if (setNm) p.appendChild(el("span", "fset", " · " + setNm));
         body.appendChild(p);
       });
       if (b.signature) body.appendChild(el("p", "ffx", "시그니처 무기: " + b.signature));
@@ -1897,6 +1921,9 @@ const supabase = createClient(
   let buildDraft = null;       // 빌드 작성 중 임시 상태: { id, name, signature, skill1, skill2, shared, slots:{key:{itemId,name}} }
   let buildReturnSlot = null;  // 빌드의 특정 슬롯을 채우러 일반 항목생성 플로우에 들어온 경우 그 슬롯 key
   let buildSigPick = false;    // 시그니처 무기 피커가 열려있는지
+  let buildSlotView = null;    // 빌드 편집 중 이미 채운 슬롯의 상세 화면이 열려있는 경우 그 슬롯 key
+  let slotEditRow = null;      // 채운 슬롯의 항목을 수정하는 중일 때 폼에 미리 채울 값(raw 행 모양)
+  let buildDetail = null;      // 목록에서 눌러 연 빌드 상세 화면의 빌드
   let buildSkillSlot = null;   // "skill1"|"skill2" — 스킬 피커가 열려있는 경우 그 슬롯 key
   let skillPickCategory = null; // 스킬 피커 1단계(카테고리)에서 고른 카테고리, null이면 카테고리 선택 화면
 
@@ -1997,6 +2024,7 @@ const supabase = createClient(
     homeBtn.setAttribute("aria-label", "새 항목 만들기");
     homeBtn.title = "새 항목 만들기";
     homeBtn.addEventListener("click", () => {
+      buildSlotView = null; slotEditRow = null; buildDetail = null;
       if (buildReturnSlot) {
         buildReturnSlot = null;
         createGroup = "빌드";
@@ -2025,6 +2053,180 @@ const supabase = createClient(
     return toolbar;
   }
 
+  // 세트 부품의 카테고리("set-...")에서 세트 이름을 알아낸다. 브랜드 부품은 카테고리에 브랜드가 없어 null.
+  function setNameOf(category) {
+    if (!category || category.indexOf("set-") !== 0) return null;
+    const c = FARM_CATS.find((x) => x.id === category);
+    return c ? c.label : null;
+  }
+
+  // 빌드 슬롯 값(이미 저장된 항목 id, 또는 아직 저장 전 payload)을 항목 raw 행 모양으로 바꾼다
+  function slotAsRow(slot) {
+    if (!slot) return null;
+    if (slot.payload) {
+      const p = slot.payload;
+      const base = slot.itemId ? (customRawById[slot.itemId] || {}) : {};
+      return {
+        id: slot.itemId || null, category: p.category || base.category, kind: p.kind, name: p.name,
+        main_attrs: p.mainAttrs || [], sub_attrs: p.subAttrs || [], special_effect: p.effect || "",
+        gear_mod: p.gearMod || "", weapon_mods: p.weaponMods || null, shared: !!p.shared
+      };
+    }
+    return customRawById[slot.itemId] || null;
+  }
+
+  // 항목 하나의 상세 내용 (빌드 상세, 슬롯 상세에서 공용)
+  function renderItemDetail(row) {
+    const wrap = el("div", "");
+    const head = el("div", "fname");
+    head.appendChild(el("b", "", row.name));
+    if (row.kind === "네임드") head.appendChild(el("span", "ftag k-nm", "네임드"));
+    else if (row.kind === "특급") head.appendChild(el("span", "ftag k-ex", "특급"));
+    const setNm = setNameOf(row.category);
+    if (setNm) head.appendChild(el("span", "ftag k-set", setNm));
+    wrap.appendChild(head);
+    const line = (label, val) => {
+      if (!val) return;
+      const p = el("p", "ffx");
+      p.appendChild(document.createTextNode(label + ": "));
+      p.appendChild(el("b", "", val));
+      wrap.appendChild(p);
+    };
+    line("핵심속성", (row.main_attrs || []).join(", "));
+    line("보조속성", (row.sub_attrs || []).join(", "));
+    line("개조", row.gear_mod);
+    WEAPON_MOD_SLOTS.forEach((sl) => line(sl.label, row.weapon_mods && row.weapon_mods[sl.key]));
+    if (row.special_effect) {
+      const i = row.special_effect.indexOf(": ");
+      line("특수효과", i < 0 ? row.special_effect : row.special_effect.slice(0, i));
+      if (i >= 0) wrap.appendChild(el("p", "fx-desc", row.special_effect.slice(i + 2)));
+    }
+    return wrap;
+  }
+
+  // 빌드 슬롯을 처음부터 다시 고르는 흐름 (빈 슬롯을 눌렀을 때와 같다)
+  function startSlotPick(s) {
+    buildReturnSlot = s.key;
+    buildSlotView = null;
+    slotEditRow = null;
+    editingId = null;
+    createModelName = undefined; createModelKind = null; createModelEffect = null; createFixedAttrs = []; createPieceSlot = null;
+    if (s.type === "weapon") { createGroup = "무기"; createCat = null; }
+    else { createGroup = "보호장구"; createCat = s.cat; }
+    renderCreatePanel();
+  }
+
+  // 채운 슬롯의 항목을 그대로 폼에 채워서 부분 수정한다
+  function openSlotEdit(slotKey) {
+    const slot = buildDraft.slots[slotKey];
+    const row = slotAsRow(slot);
+    if (!row) return;
+    const slotDef = BUILD_SLOTS.find((x) => x.key === slotKey);
+    const cat = FARM_CATS.find((c) => c.id === row.category);
+    buildReturnSlot = slotKey;
+    buildSlotView = null;
+    slotEditRow = row;
+    editingId = null;
+    createGroup = cat ? cat.group : (slotDef.type === "weapon" ? "무기" : "보호장구");
+    createCat = row.category;
+    createModelName = row.name;
+    createModelKind = row.kind || null;
+    createModelEffect = null; createFixedAttrs = []; createPieceSlot = null;
+    if (createGroup === "세트") {
+      const piece = (setPieces[row.category] || []).find((p) => p.name_ko === row.name);
+      if (piece) createPieceSlot = piece.slot;
+    }
+    renderCreatePanel();
+  }
+
+  function renderSlotDetail(box) {
+    const slotDef = BUILD_SLOTS.find((x) => x.key === buildSlotView);
+    const row = slotAsRow(buildDraft.slots[buildSlotView]);
+    box.appendChild(pickerHeader(() => { buildSlotView = null; renderCreatePanel(); }));
+    const center = el("div", "fcreate-center");
+    center.appendChild(el("div", "fcreate-intro", slotDef.label));
+    const detail = el("div", "fdetail");
+    if (row) detail.appendChild(renderItemDetail(row));
+    else detail.appendChild(el("p", "ffx", "(삭제된 항목)"));
+    center.appendChild(detail);
+    const actions = el("div", "fdetail-actions");
+    if (row) {
+      const edit = el("button", "flink", "수정");
+      edit.type = "button";
+      edit.addEventListener("click", () => openSlotEdit(slotDef.key));
+      actions.appendChild(edit);
+    }
+    const repick = el("button", "flink", "다시 선택");
+    repick.type = "button";
+    repick.addEventListener("click", () => startSlotPick(slotDef));
+    actions.appendChild(repick);
+    center.appendChild(actions);
+    box.appendChild(center);
+  }
+
+  function openBuildDetail(b) {
+    buildDetail = b;
+    buildDraft = null;
+    createGroup = "빌드";
+    createCat = null;
+    createOpen = true;
+    renderCreatePanel();
+  }
+
+  function renderBuildDetail(box) {
+    const b = buildDetail;
+    box.appendChild(pickerHeader(() => closeCreatePanel()));
+    const center = el("div", "fcreate-center");
+    const wrap = el("div", "fdetail");
+    const title = el("div", "fname");
+    title.appendChild(el("b", "", b.name));
+    title.appendChild(el("span", "ftag k-set", "빌드"));
+    if (b.shared) title.appendChild(el("span", "ftag ftag-shared", b.isOwn ? "공유중" : "공유받음"));
+    wrap.appendChild(title);
+    BUILD_SLOTS.forEach((s) => {
+      const itemId = b[s.key + "_id"];
+      if (!itemId) return;
+      const row = customRawById[itemId];
+      const sec = el("div", "fdetail-sec");
+      sec.appendChild(el("p", "fdetail-label", s.label));
+      sec.appendChild(row ? renderItemDetail(row) : el("p", "ffx", "(삭제된 항목)"));
+      wrap.appendChild(sec);
+    });
+    const extra = el("div", "fdetail-sec");
+    const pl = (label, val) => {
+      if (!val) return;
+      const p = el("p", "ffx");
+      p.appendChild(document.createTextNode(label + ": "));
+      p.appendChild(el("b", "", val));
+      extra.appendChild(p);
+    };
+    pl("시그니처 무기", b.signature);
+    pl("스킬1", b.skill1);
+    pl("스킬2", b.skill2);
+    if (extra.children.length) wrap.appendChild(extra);
+    center.appendChild(wrap);
+    if (b.isOwn) {
+      const actions = el("div", "fdetail-actions");
+      const edit = el("button", "flink", "수정");
+      edit.type = "button";
+      edit.addEventListener("click", () => { buildDetail = null; openEditForBuild(b); });
+      const del = el("button", "flink flink-danger", "삭제");
+      del.type = "button";
+      del.addEventListener("click", async () => {
+        if (!confirm(`"${b.name}" 빌드를 삭제할까요? 연결된 무기/방어구 항목도 함께 삭제됩니다.`)) return;
+        await deleteBuild(b);
+        await loadCustomItems();
+        await loadBuilds();
+        closeCreatePanel();
+        renderFarmChips();
+      });
+      actions.appendChild(edit);
+      actions.appendChild(del);
+      center.appendChild(actions);
+    }
+    box.appendChild(center);
+  }
+
   function pickerHeader(onBack) {
     const bar = el("div", "fcreate-headerbar");
     const back = el("button", "fcreate-backbtn", "");
@@ -2049,6 +2251,9 @@ const supabase = createClient(
     buildDraft = null;
     buildReturnSlot = null;
     buildSigPick = false;
+    buildSlotView = null;
+    slotEditRow = null;
+    buildDetail = null;
     buildSkillSlot = null;
     skillPickCategory = null;
     renderCreatePanel();
@@ -2071,7 +2276,8 @@ const supabase = createClient(
   }
 
   function openEditForBuild(b) {
-    buildDraft = { id: b.id, name: b.name, signature: b.signature || "", skill1: b.skill1 || "", skill2: b.skill2 || "", shared: !!b.shared, slots: {} };
+    buildDetail = null;
+    buildDraft = { id: b.id, orphans: [], name: b.name, signature: b.signature || "", skill1: b.skill1 || "", skill2: b.skill2 || "", shared: !!b.shared, slots: {} };
     BUILD_SLOTS.forEach((s) => {
       const itemId = b[s.key + "_id"];
       if (itemId) buildDraft.slots[s.key] = { itemId, name: (customRawById[itemId] || {}).name || "?" };
@@ -2093,6 +2299,8 @@ const supabase = createClient(
     if (!createOpen) return;
 
     if (createGroup === "빌드") {
+      if (buildDetail) { renderBuildDetail(box); return; }
+      if (buildSlotView) { renderSlotDetail(box); return; }
       if (buildSigPick) { renderSignaturePicker(box); return; }
       if (buildSkillSlot) { renderSkillPicker(box); return; }
       renderBuildEditor(box);
@@ -2324,13 +2532,21 @@ const supabase = createClient(
       return;
     }
 
-    const editRow = editingId ? customRawById[editingId] : null;
+    const editRow = editingId ? customRawById[editingId] : slotEditRow;
 
     const form = el("form", "fcreate-form");
 
     form.appendChild(pickerHeader(() => {
       // 수정 중이면 목록에서 들어온 것이므로 목록으로 돌아간다 (브라우저 뒤로가기처럼 직전 화면)
       if (editingId) { closeCreatePanel(); return; }
+      if (slotEditRow) { // 채운 슬롯 수정 중이면 그 슬롯의 상세 화면으로
+        const k = buildReturnSlot;
+        slotEditRow = null; buildReturnSlot = null; createGroup = "빌드"; createCat = null;
+        createModelName = undefined; createModelKind = null; createModelEffect = null; createFixedAttrs = []; createPieceSlot = null;
+        buildSlotView = k;
+        renderCreatePanel();
+        return;
+      }
       createModelName = undefined; createModelKind = null; createModelEffect = null; createFixedAttrs = []; createPieceSlot = null;
       renderCreatePanel();
     }));
@@ -2597,10 +2813,18 @@ const supabase = createClient(
         gearMod: getGearMod(),
         weaponMods: getWeaponMods()
       };
-      if (buildReturnSlot && !editRow) {
-        // 빌드 슬롯은 "빌드 저장"을 눌러야 실제로 DB에 생성된다 — 여기서는 폼 값만 임시로 들고 있는다.
-        buildDraft.slots[buildReturnSlot] = { payload: { category: savedCat, ...payload }, name };
+      if (buildReturnSlot) {
+        // 빌드 슬롯은 "빌드 저장"을 눌러야 실제로 DB에 생성/수정된다 — 여기서는 폼 값만 임시로 들고 있는다.
+        // 채운 슬롯을 부분 수정한 경우(slotEditRow)는 같은 항목을 갱신하고,
+        // 다른 항목으로 다시 고른 경우는 옛 항목을 빌드 저장 때 지운다.
+        const prev = buildDraft.slots[buildReturnSlot];
+        const keepItem = !!slotEditRow && prev && prev.itemId;
+        if (!slotEditRow && prev && prev.itemId) (buildDraft.orphans || (buildDraft.orphans = [])).push(prev.itemId);
+        buildDraft.slots[buildReturnSlot] = { itemId: keepItem ? prev.itemId : undefined, payload: { category: savedCat, ...payload }, name };
+        slotEditRow = null;
         buildReturnSlot = null;
+        createCat = null;
+        createModelName = undefined; createModelKind = null; createModelEffect = null; createFixedAttrs = []; createPieceSlot = null;
         createGroup = "빌드";
         renderCreatePanel();
         return;
@@ -2643,12 +2867,8 @@ const supabase = createClient(
         const b = el("button", "fcard fcard-sm", filled ? `${s.label}: ${filled.name}` : s.label);
         b.type = "button";
         b.addEventListener("click", () => {
-          buildReturnSlot = s.key;
-          editingId = null;
-          createModelName = undefined; createModelKind = null; createModelEffect = null; createFixedAttrs = []; createPieceSlot = null;
-          if (s.type === "weapon") { createGroup = "무기"; createCat = null; }
-          else { createGroup = "보호장구"; createCat = s.cat; }
-          renderCreatePanel();
+          if (filled) { buildSlotView = s.key; renderCreatePanel(); return; } // 채운 슬롯은 먼저 지정한 내용을 보여준다
+          startSlotPick(s);
         });
         row.appendChild(b);
       });
