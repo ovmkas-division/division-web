@@ -598,6 +598,15 @@
   .fattr-btn[aria-pressed="true"].fattr-red, .fattr-tab[aria-pressed="true"].fattr-red { border-color: var(--bad); color: var(--bad); background: rgba(255, 91, 87, .12); }
   .fattr-btn[aria-pressed="true"].fattr-blue, .fattr-tab[aria-pressed="true"].fattr-blue { border-color: #6bb6ff; color: #6bb6ff; background: rgba(107, 182, 255, .12); }
   .fattr-btn[aria-pressed="true"].fattr-yellow, .fattr-tab[aria-pressed="true"].fattr-yellow { border-color: var(--brand); color: var(--brand); background: rgba(242, 181, 68, .12); }
+  .fslot-row { display: flex; gap: 8px; align-items: stretch; margin-bottom: 8px; }
+  .fslot-row select { flex: 1; min-width: 0; min-height: 44px; padding: 8px 12px; background: var(--void); border: 1px solid var(--line-hot); color: var(--text); font: inherit; font-size: 1rem; }
+  .fslot-row select.fattr-red { border-color: var(--bad); color: var(--bad); }
+  .fslot-row select.fattr-blue { border-color: #6bb6ff; color: #6bb6ff; }
+  .fslot-row select.fattr-yellow { border-color: var(--brand); color: var(--brand); }
+  .fslot-label { min-width: 84px; align-self: center; }
+  .fslot-del { min-width: 44px; border: 1px solid var(--line-hot); background: transparent; color: var(--muted); font-size: 1.1rem; cursor: pointer; }
+  .fslot-add { min-height: 40px; padding: 7px 14px; border: 1px dashed var(--line-hot); background: transparent; color: var(--muted); font-size: .92rem; cursor: pointer; }
+  .fslot-add[hidden] { display: none; }
   .ftag-locked { color: var(--text); border-color: var(--shd); background: rgba(255, 106, 0, .12); }
   @media (max-width: 560px) {
     .fgroup { flex-direction: column; gap: 4px; }
@@ -1271,16 +1280,19 @@ const supabase = createClient(
     data.forEach((row) => {
       customRawById[row.id] = row;
       const rows = [];
-      (row.main_attrs || []).forEach((v) => rows.push(["주속성", v]));
+      (row.main_attrs || []).forEach((v) => rows.push(["핵심속성", v]));
       (row.sub_attrs || []).forEach((v) => rows.push(["보조속성", v]));
       const isOwn = !!session && row.user_id === session.user.id;
-      const item = { id: "custom-" + row.id, dbId: row.id, custom: true, isOwn, shared: row.shared, ko: row.name, kind: row.kind, rows, fx: row.special_effect || undefined, mod: row.gear_mod || undefined };
+      const item = { id: "custom-" + row.id, dbId: row.id, custom: true, isOwn, shared: row.shared, ko: row.name, kind: row.kind, rows, fx: row.special_effect || undefined, mod: row.gear_mod || undefined, wmods: row.weapon_mods || undefined };
       (customItems[row.category] || (customItems[row.category] = [])).push(item);
     });
   }
 
   // DB에 이미 있는 무기/방어구 탈렌트 목록 — 특수효과 검색·선택용
   let talentOptions = { "무기": [], "보호장구": [] };
+  // 무기군(FARM_CATS id)별 탈렌트 — weapon_talents.weapon_groups는 mmr/shotgun 표기를 쓴다
+  const WEAPON_TALENT_GROUP = { dmr: "mmr", sg: "shotgun" };
+  let weaponTalentsByGroup = {};
 
   // 탈렌트마다 기본형("절멸")과 완벽한형("완벽한 절멸")이 각각 별도 효과라 둘 다 선택지에 넣는다.
   function expandTalentVariants(rows) {
@@ -1294,10 +1306,18 @@ const supabase = createClient(
 
   async function loadTalentOptions() {
     const [wt, gt] = await Promise.all([
-      supabase.from("weapon_talents").select("name_ko, desc_ko, perfect_name_ko, perfect_desc_ko"),
+      supabase.from("weapon_talents").select("name_ko, desc_ko, perfect_name_ko, perfect_desc_ko, weapon_groups"),
       supabase.from("gear_talents").select("name_ko, desc_ko, perfect_name_ko, perfect_desc_ko")
     ]);
-    if (wt.error) console.error(wt.error); else talentOptions["무기"] = expandTalentVariants(wt.data);
+    if (wt.error) console.error(wt.error);
+    else {
+      talentOptions["무기"] = expandTalentVariants(wt.data);
+      weaponTalentsByGroup = {};
+      ["ar", "rifle", "dmr", "smg", "lmg", "sg", "pistol"].forEach((id) => {
+        const g = WEAPON_TALENT_GROUP[id] || id;
+        weaponTalentsByGroup[id] = expandTalentVariants(wt.data.filter((r) => (r.weapon_groups || []).includes(g)));
+      });
+    }
     if (gt.error) console.error(gt.error); else talentOptions["보호장구"] = expandTalentVariants(gt.data);
   }
 
@@ -1390,20 +1410,31 @@ const supabase = createClient(
   // weapon_core_attrs/weapon_secondary_attrs/gear_mods)에서 불러온다.
   // 무기와 방어구는 나무위키상 속성 체계 자체가 다르다:
   //   방어구: 핵심속성 3종 중 1개 택1 + 카테고리별 비핵심속성(무기/방어도/스킬) + (마스크·방탄복·백팩만) 개조
-  //   무기: 무기군마다 정해진 핵심속성 1~2개(전 무기군 공용 "무기 대미지" + 무기군별 고유 스탯) + 공용 비핵심속성 13종
+  //   무기: 무기군마다 정해진 핵심속성 1~2개("<무기군> 대미지" + 무기군별 고유 스탯) + 공용 비핵심속성 13종
   let gearCoreAttrs = [];       // [{label, color}]
   let gearSecondaryGroups = []; // [{label, color, items:[name,...]}]
   let weaponCoreAttrs = {};     // { weapon_group: [name,...] }
   let weaponSecondaryAttrs = []; // [name,...]
-  let gearModOptions = [];      // [name,...] — 개조 입력칸 자동완성용
+  let gearModOptions = [];      // [{name, category}] — 방어구 개조(모듈) 선택지
+  // 무기 개조 부품 — 슬롯별로 묶는다. 산탄총은 총구 슬롯이 없다(나무위키 무기 문서 표).
+  const WEAPON_MOD_SLOTS = [
+    { key: "optic", label: "광학" },
+    { key: "magazine", label: "탄창" },
+    { key: "underbarrel", label: "총열 하단부" },
+    { key: "muzzle", label: "총구" }
+  ];
+  let weaponModOptions = {};    // { slot: [{category, name, effect, penalty}] }
+  let weaponFixedMods = {};     // { 무기 name_ko: { slot: {name, effect} } } — 특급 등 고정 부품
 
   async function loadAttrCatalogs() {
-    const [gc, gs, wc, ws, gm] = await Promise.all([
+    const [gc, gs, wc, ws, gm, wm, wf] = await Promise.all([
       supabase.from("gear_core_attrs").select("name_ko, color").order("id"),
       supabase.from("gear_secondary_attrs").select("category_ko, color, name_ko").order("id"),
       supabase.from("weapon_core_attrs").select("weapon_group, name_ko").order("id"),
       supabase.from("weapon_secondary_attrs").select("name_ko").order("id"),
-      supabase.from("gear_mods").select("name_ko").order("id")
+      supabase.from("gear_mods").select("category_ko, name_ko").order("id"),
+      supabase.from("weapon_mods").select("slot, category_ko, name_ko, effect_ko, penalty_ko").order("id"),
+      supabase.from("weapon_fixed_mods").select("weapon_name_ko, slot, name_ko, effect_ko").order("id")
     ]);
     if (gc.error) console.error(gc.error); else gearCoreAttrs = gc.data.map((r) => ({ label: r.name_ko, color: r.color }));
     if (gs.error) console.error(gs.error);
@@ -1421,7 +1452,26 @@ const supabase = createClient(
       wc.data.forEach((r) => { (weaponCoreAttrs[r.weapon_group] || (weaponCoreAttrs[r.weapon_group] = [])).push(r.name_ko); });
     }
     if (ws.error) console.error(ws.error); else weaponSecondaryAttrs = ws.data.map((r) => r.name_ko);
-    if (gm.error) console.error(gm.error); else gearModOptions = gm.data.map((r) => r.name_ko);
+    if (gm.error) console.error(gm.error); else {
+      // 분류 순서: 공격 → 방어 → 스킬 (같은 분류는 DB 순서 유지)
+      const catOrder = ["공격", "무기", "방어", "방어도", "스킬"];
+      gearModOptions = gm.data.map((r) => ({ name: r.name_ko, category: r.category_ko }))
+        .sort((x, y) => catOrder.indexOf(x.category) - catOrder.indexOf(y.category));
+    }
+    if (wf.error) console.error(wf.error);
+    else {
+      weaponFixedMods = {};
+      wf.data.forEach((r) => {
+        (weaponFixedMods[r.weapon_name_ko] || (weaponFixedMods[r.weapon_name_ko] = {}))[r.slot] = { name: r.name_ko, effect: r.effect_ko };
+      });
+    }
+    if (wm.error) console.error(wm.error);
+    else {
+      weaponModOptions = {};
+      wm.data.forEach((r) => {
+        (weaponModOptions[r.slot] || (weaponModOptions[r.slot] = [])).push({ category: r.category_ko, name: r.name_ko, effect: r.effect_ko, penalty: r.penalty_ko });
+      });
+    }
   }
 
   let setPieces = {};
@@ -1460,6 +1510,15 @@ const supabase = createClient(
     });
   }
 
+  // 시그니처 무기 카탈로그 (signature_weapons) — 전문화별 1개
+  let signatureOptions = [];
+
+  async function loadSignatureWeapons() {
+    const { data, error } = await supabase.from("signature_weapons").select("specialization_ko, name_ko").order("id");
+    if (error) { console.error(error); return; }
+    signatureOptions = data;
+  }
+
   async function loadBuilds() {
     const { data, error } = await supabase.from("farm_builds").select("*");
     if (error) { console.error(error); return; }
@@ -1486,7 +1545,7 @@ const supabase = createClient(
         delete slot.payload;
       }
     }
-    const payload = { name: draft.name, skill1: draft.skill1 || null, skill2: draft.skill2 || null, shared: !!draft.shared };
+    const payload = { name: draft.name, signature: draft.signature || null, skill1: draft.skill1 || null, skill2: draft.skill2 || null, shared: !!draft.shared };
     BUILD_SLOTS.forEach((s) => { payload[s.key + "_id"] = draft.slots[s.key] ? draft.slots[s.key].itemId : null; });
     const { data, error } = draft.id
       ? await supabase.from("farm_builds").update(payload).eq("id", draft.id).select().single()
@@ -1548,26 +1607,28 @@ const supabase = createClient(
     });
   }
 
-  async function saveCustomItem({ category, kind, name, mainAttrs, subAttrs, effect, shared, gearMod }) {
+  async function saveCustomItem({ category, kind, name, mainAttrs, subAttrs, effect, shared, gearMod, weaponMods }) {
     const { data, error } = await supabase.from("farm_custom_items").insert({
       category, kind, name,
       main_attrs: mainAttrs,
       sub_attrs: subAttrs,
       special_effect: effect || null,
       gear_mod: gearMod || null,
+      weapon_mods: weaponMods || null,
       shared: !!shared
     }).select().single();
     if (error) { console.error(error); return null; }
     return data;
   }
 
-  async function updateCustomItem(id, { kind, name, mainAttrs, subAttrs, effect, shared, gearMod }) {
+  async function updateCustomItem(id, { kind, name, mainAttrs, subAttrs, effect, shared, gearMod, weaponMods }) {
     const { error } = await supabase.from("farm_custom_items").update({
       kind, name,
       main_attrs: mainAttrs,
       sub_attrs: subAttrs,
       special_effect: effect || null,
       gear_mod: gearMod || null,
+      weapon_mods: weaponMods || null,
       shared: !!shared
     }).eq("id", id);
     if (error) { console.error(error); return false; }
@@ -1597,6 +1658,7 @@ const supabase = createClient(
         p.appendChild(el("b", "", item ? item.name : "(삭제된 항목)"));
         body.appendChild(p);
       });
+      if (b.signature) body.appendChild(el("p", "ffx", "시그니처 무기: " + b.signature));
       if (b.skill1) body.appendChild(el("p", "ffx", "스킬1: " + b.skill1));
       if (b.skill2) body.appendChild(el("p", "ffx", "스킬2: " + b.skill2));
       if (b.isOwn) {
@@ -1736,6 +1798,9 @@ const supabase = createClient(
       });
       if (it.fx) body.appendChild(el("p", "fget", it.fx));
       if (it.mod) body.appendChild(el("p", "ffx", `개조: ${it.mod}`));
+      if (it.wmods) {
+        WEAPON_MOD_SLOTS.filter((sl) => it.wmods[sl.key]).forEach((sl) => body.appendChild(el("p", "ffx", `${sl.label}: ${it.wmods[sl.key]}`)));
+      }
       if (it.custom && it.isOwn && !deleteMode) {
         const actions = el("div", "fitem-actions");
         const editBtn = el("button", "flink", "수정");
@@ -1826,8 +1891,9 @@ const supabase = createClient(
   let createFixedAttrs = [];       // 네임드 방어구의 고유 속성(고정, 수정 불가) — 보조속성 칸에 잠긴 채로 채워짐
   let createPieceSlot = null;      // 세트 부위 선택 시의 실제 슬롯(mask/chest/backpack/gloves/holster/kneepads) — 개조 가능 여부 판단용
   let editingId = null;        // farm_custom_items.id when editing, null when creating
-  let buildDraft = null;       // 빌드 작성 중 임시 상태: { id, name, skill1, skill2, shared, slots:{key:{itemId,name}} }
+  let buildDraft = null;       // 빌드 작성 중 임시 상태: { id, name, signature, skill1, skill2, shared, slots:{key:{itemId,name}} }
   let buildReturnSlot = null;  // 빌드의 특정 슬롯을 채우러 일반 항목생성 플로우에 들어온 경우 그 슬롯 key
+  let buildSigPick = false;    // 시그니처 무기 피커가 열려있는지
   let buildSkillSlot = null;   // "skill1"|"skill2" — 스킬 피커가 열려있는 경우 그 슬롯 key
   let skillPickCategory = null; // 스킬 피커 1단계(카테고리)에서 고른 카테고리, null이면 카테고리 선택 화면
 
@@ -1843,6 +1909,63 @@ const supabase = createClient(
 
   // 검색은 띄어쓰기 차이를 무시한다 ("성엘모"로 쳐도 "성 엘모의 엔진"을 찾도록)
   const normSearch = (s) => String(s).toLowerCase().replace(/\s+/g, "");
+
+  // "+ 추가" 버튼으로 슬롯을 늘리는 속성 편집기. options: [{name,color,group?}], max: 최대 슬롯 수.
+  // 이미 고른 값은 다른 슬롯 선택지에서 빠진다. values는 항상 현재 선택값(빈 슬롯 제외).
+  function slotEditor({ options, initial, max, addLabel }) {
+    const rows = (initial || []).slice();
+    const wrap = el("div", "");
+    const list = el("div", "");
+    const addBtn = el("button", "fslot-add", addLabel);
+    addBtn.type = "button";
+    const optionOf = (name) => options.find((o) => o.name === name);
+    const render = () => {
+      list.replaceChildren();
+      rows.forEach((val, i) => {
+        const row = el("div", "fslot-row");
+        const sel = document.createElement("select");
+        const opt0 = el("option", "", "선택하세요");
+        opt0.value = "";
+        sel.appendChild(opt0);
+        const taken = new Set(rows.filter((_, j) => j !== i));
+        let grp = null, grpName = null;
+        options.forEach((o) => {
+          if (taken.has(o.name)) return;
+          if (o.group !== grpName) {
+            grpName = o.group;
+            grp = grpName ? Object.assign(document.createElement("optgroup"), { label: grpName }) : null;
+            if (grp) sel.appendChild(grp);
+          }
+          const opt = el("option", "", o.name);
+          opt.value = o.name;
+          (grp || sel).appendChild(opt);
+        });
+        if (val && !optionOf(val)) { // 옛 데이터: 카탈로그에 없는 값도 잃지 않게 유지
+          const opt = el("option", "", val);
+          opt.value = val;
+          sel.appendChild(opt);
+        }
+        sel.value = val;
+        const cur = optionOf(val);
+        if (cur && cur.color) sel.className = "fattr-" + cur.color;
+        sel.addEventListener("change", () => { rows[i] = sel.value; render(); });
+        const del = el("button", "fslot-del", "×");
+        del.type = "button";
+        del.setAttribute("aria-label", "삭제");
+        del.addEventListener("click", () => { rows.splice(i, 1); render(); });
+        row.appendChild(sel);
+        row.appendChild(del);
+        list.appendChild(row);
+      });
+      addBtn.hidden = rows.length >= max;
+    };
+    addBtn.addEventListener("click", () => { rows.push(""); render(); });
+    render();
+    wrap.appendChild(list);
+    wrap.appendChild(addBtn);
+    wrap.values = () => rows.filter(Boolean);
+    return wrap;
+  }
 
   function labeledField(label, inputEl) {
     const row = el("div", "fcreate-row");
@@ -1921,6 +2044,7 @@ const supabase = createClient(
     editingId = null;
     buildDraft = null;
     buildReturnSlot = null;
+    buildSigPick = false;
     buildSkillSlot = null;
     skillPickCategory = null;
     renderCreatePanel();
@@ -1943,7 +2067,7 @@ const supabase = createClient(
   }
 
   function openEditForBuild(b) {
-    buildDraft = { id: b.id, name: b.name, skill1: b.skill1 || "", skill2: b.skill2 || "", shared: !!b.shared, slots: {} };
+    buildDraft = { id: b.id, name: b.name, signature: b.signature || "", skill1: b.skill1 || "", skill2: b.skill2 || "", shared: !!b.shared, slots: {} };
     BUILD_SLOTS.forEach((s) => {
       const itemId = b[s.key + "_id"];
       if (itemId) buildDraft.slots[s.key] = { itemId, name: (customRawById[itemId] || {}).name || "?" };
@@ -1965,6 +2089,7 @@ const supabase = createClient(
     if (!createOpen) return;
 
     if (createGroup === "빌드") {
+      if (buildSigPick) { renderSignaturePicker(box); return; }
       if (buildSkillSlot) { renderSkillPicker(box); return; }
       renderBuildEditor(box);
       return;
@@ -2206,6 +2331,7 @@ const supabase = createClient(
     }));
 
     let kindVal = editRow ? editRow.kind : (createGroup === "세트" ? "세트" : (createModelKind || "일반"));
+    let onKindChange = () => {};
     const kindWrap = el("div", "fcreate-kinds");
     if (createGroup === "세트") {
       kindWrap.appendChild(el("span", "fkind fkind-set", "세트"));
@@ -2217,6 +2343,7 @@ const supabase = createClient(
         b.addEventListener("click", () => {
           kindVal = k;
           kindWrap.querySelectorAll(".fkind").forEach((n) => n.setAttribute("aria-pressed", String(n.textContent === k)));
+          onKindChange();
         });
         kindWrap.appendChild(b);
       });
@@ -2239,44 +2366,28 @@ const supabase = createClient(
       : createGroup === "세트" ? (["mask", "chest", "backpack"].includes(createPieceSlot) ? createPieceSlot : null)
       : null;
 
-    // 주속성
-    const mainAttrsSelected = new Set(editRow && editRow.main_attrs ? editRow.main_attrs : []);
-    const mainOptions = isWeaponGroup
-      ? (weaponCoreAttrs[createCat] || []).map((n) => ({ label: n, color: "red" }))
-      : gearCoreAttrs;
-    const mainWrap = el("div", "fattr-row");
-    const renderMainButtons = () => {
-      mainWrap.replaceChildren();
-      mainOptions.forEach((a) => {
-        const b = el("button", "fattr-btn fattr-" + a.color, a.label);
-        b.type = "button";
-        b.setAttribute("aria-pressed", String(mainAttrsSelected.has(a.label)));
-        b.addEventListener("click", () => {
-          if (isWeaponGroup) {
-            if (mainAttrsSelected.has(a.label)) mainAttrsSelected.delete(a.label); else mainAttrsSelected.add(a.label);
-          } else {
-            const already = mainAttrsSelected.has(a.label);
-            mainAttrsSelected.clear();
-            if (!already) mainAttrsSelected.add(a.label);
-          }
-          renderMainButtons();
-        });
-        mainWrap.appendChild(b);
-      });
-    };
-    renderMainButtons();
-    form.appendChild(labeledField("주속성", mainWrap));
-
-    // 보조속성: 방어구/세트는 카테고리(무기/방어도/스킬) 탭 + 색상, 무기는 카테고리 구분 없는 단일 목록.
-    // 네임드 방어구를 고른 경우의 고정 속성은 그대로 잠긴 태그로 위에 따로 보여준다.
-    const allSecondary = isWeaponGroup ? weaponSecondaryAttrs.slice() : gearSecondaryGroups.flatMap((g) => g.items);
+    // 핵심속성 / 보조속성: "+ 추가" 슬롯 방식. 최대 개수는 나무위키 품질 표 기준.
+    //   무기: 핵심 2 / 보조 1, 방어구: 핵심 1 / 보조 2, 세트: 핵심 1 / 보조 1
+    // 네임드 방어구의 고정 속성(createFixedAttrs)은 슬롯과 별개로 잠긴 태그로 위에 보여준다.
+    const coreMax = isWeaponGroup ? 2 : 1;
+    const subMax = isWeaponGroup || createGroup === "세트" ? 1 : 2;
+    const coreOptions = isWeaponGroup
+      ? (weaponCoreAttrs[createCat] || []).map((n) => ({ name: n, color: "red" }))
+      : gearCoreAttrs.map((a) => ({ name: a.label, color: a.color }));
+    const subOptions = isWeaponGroup
+      ? weaponSecondaryAttrs.map((n) => ({ name: n, color: "red" }))
+      : gearSecondaryGroups.flatMap((g) => g.items.map((n) => ({ name: n, color: g.color, group: g.label })));
+    const allSecondary = subOptions.map((o) => o.name);
     const lockedSubAttrs = !editRow ? createFixedAttrs.slice() : [];
-    const subAttrsSelected = new Set(
-      editRow && editRow.sub_attrs ? editRow.sub_attrs.filter((v) => allSecondary.includes(v)) : []
-    );
     const legacySubAttrs = editRow && editRow.sub_attrs
       ? editRow.sub_attrs.filter((v) => !allSecondary.includes(v))
       : [];
+
+    // 무기는 무기군의 핵심속성 2개가 항상 붙어 나오므로 새로 만들 때 전부 미리 채워 둔다.
+    const coreInitial = editRow && editRow.main_attrs && editRow.main_attrs.length ? editRow.main_attrs
+      : isWeaponGroup && coreOptions.length ? coreOptions.map((o) => o.name) : [""];
+    const mainEditor = slotEditor({ options: coreOptions, initial: coreInitial, max: coreMax, addLabel: "+ 핵심속성 추가" });
+    form.appendChild(labeledField("핵심속성", mainEditor));
 
     const subBody = el("div", "");
     if (lockedSubAttrs.length || legacySubAttrs.length) {
@@ -2284,92 +2395,168 @@ const supabase = createClient(
       lockedSubAttrs.concat(legacySubAttrs).forEach((v) => lockedRow.appendChild(el("span", "ftag ftag-locked", v)));
       subBody.appendChild(lockedRow);
     }
-    if (isWeaponGroup) {
-      const itemRow = el("div", "fattr-row");
-      weaponSecondaryAttrs.forEach((label) => {
-        const b = el("button", "fattr-btn fattr-red", label);
-        b.type = "button";
-        b.setAttribute("aria-pressed", String(subAttrsSelected.has(label)));
-        b.addEventListener("click", () => {
-          if (subAttrsSelected.has(label)) subAttrsSelected.delete(label); else subAttrsSelected.add(label);
-          b.setAttribute("aria-pressed", String(subAttrsSelected.has(label)));
-        });
-        itemRow.appendChild(b);
-      });
-      subBody.appendChild(itemRow);
-    } else {
-      let activeSubGroup = gearSecondaryGroups[0] ? gearSecondaryGroups[0].label : null;
-      const subPicker = el("div", "");
-      const renderSubPicker = () => {
-        subPicker.replaceChildren();
-        const tabRow = el("div", "fattr-row");
-        gearSecondaryGroups.forEach((g) => {
-          const b = el("button", "fattr-tab fattr-" + g.color, g.label);
-          b.type = "button";
-          b.setAttribute("aria-pressed", String(activeSubGroup === g.label));
-          b.addEventListener("click", () => { activeSubGroup = g.label; renderSubPicker(); });
-          tabRow.appendChild(b);
-        });
-        subPicker.appendChild(tabRow);
-        const group = gearSecondaryGroups.find((g) => g.label === activeSubGroup);
-        const itemRow = el("div", "fattr-row");
-        (group ? group.items : []).forEach((label) => {
-          const b = el("button", "fattr-btn fattr-" + group.color, label);
-          b.type = "button";
-          b.setAttribute("aria-pressed", String(subAttrsSelected.has(label)));
-          b.addEventListener("click", () => {
-            if (subAttrsSelected.has(label)) subAttrsSelected.delete(label); else subAttrsSelected.add(label);
-            b.setAttribute("aria-pressed", String(subAttrsSelected.has(label)));
-          });
-          itemRow.appendChild(b);
-        });
-        subPicker.appendChild(itemRow);
-      };
-      renderSubPicker();
-      subBody.appendChild(subPicker);
-    }
+    const subInitial = editRow && editRow.sub_attrs ? editRow.sub_attrs.filter((v) => allSecondary.includes(v)) : [];
+    const subEditor = slotEditor({ options: subOptions, initial: subInitial, max: subMax, addLabel: "+ 보조속성 추가" });
+    subBody.appendChild(subEditor);
     form.appendChild(labeledField("보조속성", subBody));
 
-    // 개조: 마스크/방탄복/백팩(세트 포함)만 해당 — 전체 종류가 나무위키에 명확히 정리돼 있지
-    // 않아 고정 목록 대신 자동완성이 붙은 자유 입력으로 처리한다.
-    let modInput = null;
+    // 방어구 개조("빈 개조 슬롯"에 꽂는 모듈): 마스크/방탄복/백팩(세트 포함)만 해당.
+    // 나무위키에 개별 모듈 목록이 없어 DB(gear_mods)에 확인된 것만 선택지로 두고, 나머지는 "직접 입력"으로 받는다.
+    let getGearMod = () => null;
     if (modSlot) {
-      modInput = document.createElement("input");
-      modInput.type = "text";
-      modInput.setAttribute("list", "mod-options");
-      modInput.placeholder = "개조 부품 이름 (예: 정예 대상 방호도, 직접 입력 가능)";
-      if (editRow) modInput.value = editRow.gear_mod || "";
-      const modList = document.createElement("datalist");
-      modList.id = "mod-options";
-      gearModOptions.forEach((n) => {
-        const opt = document.createElement("option");
-        opt.value = n;
-        modList.appendChild(opt);
+      const CUSTOM = "__custom__";
+      const modSel = document.createElement("select");
+      const addOpt = (label, value) => { const o = el("option", "", label); o.value = value; modSel.appendChild(o); };
+      addOpt("빈 개조 슬롯", "");
+      let modGrp = null, modGrpName = null;
+      gearModOptions.forEach((m) => {
+        if (m.category !== modGrpName) {
+          modGrpName = m.category;
+          modGrp = modGrpName ? Object.assign(document.createElement("optgroup"), { label: modGrpName }) : null;
+          if (modGrp) modSel.appendChild(modGrp);
+        }
+        const o = el("option", "", m.name);
+        o.value = m.name;
+        (modGrp || modSel).appendChild(o);
       });
-      form.appendChild(labeledField(`개조 (${SLOT_LABELS[modSlot] || modSlot})`, modInput));
-      form.appendChild(modList);
+      const saved = editRow ? (editRow.gear_mod || "") : "";
+      const savedKnown = !saved || gearModOptions.some((m) => m.name === saved);
+      addOpt("직접 입력…", CUSTOM);
+      const modText = document.createElement("input");
+      modText.type = "text";
+      modText.placeholder = "개조 부품 이름";
+      modText.hidden = savedKnown;
+      if (!savedKnown) { modSel.value = CUSTOM; modText.value = saved; } else modSel.value = saved;
+      modSel.addEventListener("change", () => { modText.hidden = modSel.value !== CUSTOM; });
+      const modWrap = el("div", "fslot-row");
+      modWrap.appendChild(modSel);
+      modWrap.appendChild(modText);
+      getGearMod = () => (modSel.value === CUSTOM ? modText.value.trim() : modSel.value);
+      form.appendChild(labeledField(`개조 (${SLOT_LABELS[modSlot] || modSlot})`, modWrap));
     }
 
-    const fxInput = document.createElement("input");
-    fxInput.type = "text";
-    fxInput.setAttribute("list", "fx-options");
-    fxInput.placeholder = "이름으로 검색하거나 목록에서 선택 (직접 입력도 가능)";
-    if (editRow) fxInput.value = editRow.special_effect || "";
-    else if (createModelEffect) fxInput.value = createModelEffect;
-    const fxOptions = talentOptions[createGroup === "세트" ? "보호장구" : createGroup] || [];
-    const fxList = document.createElement("datalist");
-    fxList.id = "fx-options";
-    fxOptions.forEach((t) => {
-      const opt = document.createElement("option");
-      opt.value = t.name_ko;
-      fxList.appendChild(opt);
-    });
-    fxInput.addEventListener("input", () => {
-      const match = fxOptions.find((t) => t.name_ko === fxInput.value);
-      if (match) fxInput.value = `${match.name_ko}: ${match.desc_ko}`;
-    });
-    form.appendChild(labeledField("특수효과", fxInput));
-    form.appendChild(fxList);
+    // 무기 개조 부품: 광학/탄창/총열 하단부/총구 각 1개. 산탄총은 총구 슬롯이 없다.
+    // 특급 무기(와 일부 네임드/일반)는 고정 부품이 있어 weapon_fixed_mods 값을 잠근 채 보여준다.
+    // 특급 무기는 고정 부품이 있는 슬롯만 있다(나머지 슬롯은 없음).
+    let getWeaponMods = () => null;
+    if (isWeaponGroup) {
+      const sels = {};
+      const fixedNow = {};
+      const savedMods = (editRow && editRow.weapon_mods) || {};
+      const fixed = weaponFixedMods[editRow ? editRow.name : createModelName] || {};
+      const isExoticWeapon = (editRow ? editRow.kind : createModelKind) === "특급";
+      const box = el("div", "");
+      WEAPON_MOD_SLOTS.filter((sl) => !(sl.key === "muzzle" && createCat === "sg" && !fixed.muzzle)).forEach((sl) => {
+        const row = el("div", "fslot-row");
+        if (fixed[sl.key]) {
+          const f = fixed[sl.key];
+          fixedNow[sl.key] = f.name;
+          row.appendChild(el("span", "fcreate-label fslot-label", sl.label));
+          row.appendChild(el("span", "ftag ftag-locked", f.effect ? `${f.name} (${f.effect})` : f.name));
+          box.appendChild(row);
+          return;
+        }
+        if (isExoticWeapon) return;
+        const sel = document.createElement("select");
+        const none = el("option", "", "선택 안 함");
+        none.value = "";
+        sel.appendChild(none);
+        let grp = null, grpName = null;
+        (weaponModOptions[sl.key] || []).forEach((m) => {
+          if (m.category !== grpName) {
+            grpName = m.category;
+            grp = Object.assign(document.createElement("optgroup"), { label: grpName });
+            sel.appendChild(grp);
+          }
+          const o = el("option", "", `${m.name} (${m.effect}${m.penalty && m.penalty !== "없음" ? ", " + m.penalty : ""})`);
+          o.value = m.name;
+          grp.appendChild(o);
+        });
+        const cur = savedMods[sl.key];
+        if (cur && !(weaponModOptions[sl.key] || []).some((m) => m.name === cur)) {
+          const o = el("option", "", cur);
+          o.value = cur;
+          sel.appendChild(o);
+        }
+        sel.value = cur || "";
+        sels[sl.key] = sel;
+        row.appendChild(el("span", "fcreate-label fslot-label", sl.label));
+        row.appendChild(sel);
+        box.appendChild(row);
+      });
+      getWeaponMods = () => {
+        const out = Object.assign({}, fixedNow);
+        Object.entries(sels).forEach(([k, sel]) => { if (sel.value) out[k] = sel.value; });
+        return Object.keys(out).length ? out : null;
+      };
+      if (box.children.length) form.appendChild(labeledField("개조 부품", box));
+    }
+
+    // 특수효과: 무기는 무기군별 목록에서 고르고(특급은 고정), 방어구/세트는 검색 입력.
+    let getFx;
+    if (isWeaponGroup) {
+      const fixedValue = (editRow ? editRow.special_effect : createModelEffect) || "";
+      const talents = weaponTalentsByGroup[createCat] || [];
+      const holder = el("div", "");
+      const renderFx = () => {
+        holder.replaceChildren();
+        if (kindVal === "특급" && fixedValue) {
+          const ro = document.createElement("input");
+          ro.type = "text";
+          ro.readOnly = true;
+          ro.value = fixedValue;
+          holder.appendChild(ro);
+          getFx = () => fixedValue;
+          return;
+        }
+        const sel = document.createElement("select");
+        const none = el("option", "", "선택 안 함");
+        none.value = "";
+        sel.appendChild(none);
+        const values = new Set();
+        talents.forEach((t) => {
+          const v = `${t.name_ko}: ${t.desc_ko}`;
+          if (values.has(v)) return;
+          values.add(v);
+          const o = el("option", "", t.name_ko);
+          o.value = v;
+          sel.appendChild(o);
+        });
+        if (fixedValue && !values.has(fixedValue)) { // 네임드 고유 효과나 예전에 직접 입력한 값도 잃지 않게
+          const o = el("option", "", fixedValue.split(":")[0]);
+          o.value = fixedValue;
+          sel.appendChild(o);
+        }
+        sel.value = fixedValue;
+        holder.appendChild(sel);
+        getFx = () => sel.value;
+      };
+      onKindChange = renderFx;
+      renderFx();
+      form.appendChild(labeledField("특수효과", holder));
+    } else {
+      const fxInput = document.createElement("input");
+      fxInput.type = "text";
+      fxInput.setAttribute("list", "fx-options");
+      fxInput.placeholder = "이름으로 검색하거나 목록에서 선택 (직접 입력도 가능)";
+      if (editRow) fxInput.value = editRow.special_effect || "";
+      else if (createModelEffect) fxInput.value = createModelEffect;
+      const fxOptions = talentOptions[createGroup === "세트" ? "보호장구" : createGroup] || [];
+      const fxList = document.createElement("datalist");
+      fxList.id = "fx-options";
+      fxOptions.forEach((t) => {
+        const opt = document.createElement("option");
+        opt.value = t.name_ko;
+        fxList.appendChild(opt);
+      });
+      fxInput.addEventListener("input", () => {
+        const match = fxOptions.find((t) => t.name_ko === fxInput.value);
+        if (match) fxInput.value = `${match.name_ko}: ${match.desc_ko}`;
+      });
+      form.appendChild(labeledField("특수효과", fxInput));
+      form.appendChild(fxList);
+      getFx = () => fxInput.value.trim();
+    }
 
     const shareRow = el("label", "fcreate-share");
     const shareInput = document.createElement("input");
@@ -2387,13 +2574,14 @@ const supabase = createClient(
       e.preventDefault();
       const name = nameInput.value.trim();
       if (!name) { nameInput.focus(); return; }
-      const mainAttrs = [...mainAttrsSelected];
-      const subAttrs = lockedSubAttrs.concat(legacySubAttrs, [...subAttrsSelected]);
+      const mainAttrs = mainEditor.values();
+      const subAttrs = lockedSubAttrs.concat(legacySubAttrs, subEditor.values());
       const savedCat = createCat;
       const payload = {
         kind: kindVal, name,
-        mainAttrs, subAttrs, effect: fxInput.value.trim(), shared: shareInput.checked,
-        gearMod: modInput ? modInput.value.trim() : null
+        mainAttrs, subAttrs, effect: getFx(), shared: shareInput.checked,
+        gearMod: getGearMod(),
+        weaponMods: getWeaponMods()
       };
       if (buildReturnSlot && !editRow) {
         // 빌드 슬롯은 "빌드 저장"을 눌러야 실제로 DB에 생성된다 — 여기서는 폼 값만 임시로 들고 있는다.
@@ -2417,7 +2605,7 @@ const supabase = createClient(
   }
 
   function renderBuildEditor(box) {
-    if (!buildDraft) buildDraft = { id: null, name: "", skill1: "", skill2: "", shared: false, slots: {} };
+    if (!buildDraft) buildDraft = { id: null, name: "", signature: "", skill1: "", skill2: "", shared: false, slots: {} };
 
     box.appendChild(pickerHeader(() => { buildDraft = null; createGroup = null; renderCreatePanel(); }));
 
@@ -2449,6 +2637,13 @@ const supabase = createClient(
       });
       center.appendChild(row);
     });
+
+    const sigRow = el("div", "fcard-grid-build cols-1");
+    const sigBtn = el("button", "fcard fcard-sm", buildDraft.signature ? `시그니처 무기: ${buildDraft.signature}` : "시그니처 무기");
+    sigBtn.type = "button";
+    sigBtn.addEventListener("click", () => { buildSigPick = true; renderCreatePanel(); });
+    sigRow.appendChild(sigBtn);
+    center.appendChild(sigRow);
 
     const skillRow = el("div", "fcard-grid-build cols-2");
     ["skill1", "skill2"].forEach((key, i) => {
@@ -2487,6 +2682,26 @@ const supabase = createClient(
     });
     center.appendChild(saveBtn);
 
+    box.appendChild(center);
+  }
+
+  function renderSignaturePicker(box) {
+    box.appendChild(pickerHeader(() => { buildSigPick = false; renderCreatePanel(); }));
+    const center = el("div", "fcreate-center");
+    center.appendChild(el("div", "fcreate-intro", "시그니처 무기를 선택하세요"));
+    const grid = el("div", "fcard-grid");
+    signatureOptions.forEach((s) => {
+      const b = el("button", "fcard fcard-sm", `${s.name_ko} (${s.specialization_ko})`);
+      b.type = "button";
+      b.addEventListener("click", () => {
+        buildDraft.signature = s.name_ko;
+        buildSigPick = false;
+        renderCreatePanel();
+      });
+      grid.appendChild(b);
+    });
+    if (!grid.children.length) grid.appendChild(el("span", "fcreate-empty", "시그니처 무기 목록을 불러오지 못했습니다."));
+    center.appendChild(grid);
     box.appendChild(center);
   }
 
@@ -2552,6 +2767,7 @@ const supabase = createClient(
     await loadSetPieces();
     await loadBuilds();
     await loadSkills();
+    await loadSignatureWeapons();
     await loadAttrCatalogs();
     buildSearchIndex();
     $("tab-loot").addEventListener("click", () => setView("loot"));
