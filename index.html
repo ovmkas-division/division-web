@@ -1772,7 +1772,7 @@ const supabase = createClient(
     list.replaceChildren();
     if (farmFilter === "빌드") {
       $("farm-bulk").hidden = true;
-      renderBuildItems(list, builds.filter((b) => b.isOwn));
+      renderBuildItems(list, builds); // 내 빌드 + 친구가 공유한 빌드(공유받음 배지)
       return;
     }
     if (typeof farmCat === "string" && farmCat.indexOf("build-") === 0 && !farmFilter) {
@@ -1789,7 +1789,8 @@ const supabase = createClient(
         const cat = FARM_CATS.find((c) => c.id === catId);
         if (!cat) return;
         if (farmFilter !== "전체" && cat.group !== farmFilter) return;
-        customItems[catId].filter((it) => it.isOwn).forEach((it) => items.push(Object.assign({ _cat: catId, _catLabel: cat.label }, it)));
+        // 내 항목 + 친구가 공유한 항목(공유받음 배지)
+        customItems[catId].forEach((it) => items.push(Object.assign({ _cat: catId, _catLabel: cat.label }, it)));
       });
     } else {
       items = (FARM_ITEMS[farmCat] || []).concat(customItems[farmCat] || []);
