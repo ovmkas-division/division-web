@@ -734,6 +734,7 @@
     <dl class="facts">
       <div><dt>기준일</dt><dd id="fact-day">-</dd></div>
       <div><dt>마지막 확인</dt><dd id="fact-checked">-</dd></div>
+      <div><dt>원본 갱신</dt><dd id="fact-source-updated">-</dd></div>
       <div><dt>다음 리셋 <span id="fact-reset-at"></span></dt><dd id="fact-reset">-</dd></div>
     </dl>
     <div id="error" class="error" role="alert" hidden></div>
@@ -756,7 +757,7 @@
   </details>
 
   <footer>
-    데이터 출처는 <a id="src" href="https://hi-dep.github.io/division2/?view=event" target="_blank" rel="noopener">hi-dep.github.io/division2</a>이며 비공식입니다.
+    데이터 출처는 <a id="src" href="https://prototrack.gg/target-loot/target-loot.php" target="_blank" rel="noopener">ProtoTrack.gg</a>이며 비공식입니다.
     한글 이름은 나무위키 보호장구 문서를 기준으로 했습니다. 게임 내 하루는 UTC 08:00에 바뀐다고 보고 계산했습니다. 이 기준은 추정이므로 파밍 전에 게임 안에서 한 번 더 확인하세요.
   </footer>
   </div>
@@ -801,7 +802,9 @@ const supabase = createClient(
 (async () => {
   "use strict";
 
-  const JSON_URL = "https://hi-dep.github.io/division2/data/event/index.json";
+  // ProtoTrack.gg의 확전 타겟 루트 텍스트를 CORS 헤더 없이 못 받아오므로(자체 서버,
+  // Access-Control-Allow-Origin 미설정) Cloudflare Worker로 감싸서 받아온다.
+  const SOURCE_URL = "https://orange-waterfall-2140.ovmkas.workers.dev";
   const RESET_UTC_HOUR = 8;          // 일일 리셋: UTC 08:00 (한국시간 17:00)
   const POLL_WAITING_MS = 5 * 60e3;  // 새 로테이션을 기다리는 동안 5분마다 확인
   const POLL_IDLE_MS = 30 * 60e3;    // 그 외에는 30분마다 확인
@@ -913,20 +916,51 @@ const supabase = createClient(
     return d;
   }
 
-  function collectDays(data) {
-    const weeks = data && data.Escalation;
-    if (!Array.isArray(weeks)) throw new Error("Escalation 항목이 없습니다. 데이터 구조가 바뀐 것 같습니다.");
-    const out = [];
-    for (const week of weeks) {
-      const rows = week && week.target_loot_by_day;
-      if (!Array.isArray(rows)) continue;
-      for (const row of rows) {
-        if (row && row.day) out.push({ day: String(row.day), week, row });
-      }
-    }
-    if (!out.length) throw new Error("날짜별 타겟 루트 항목이 없습니다.");
-    out.sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
-    return out;
+  // ProtoTrack의 캐시 항목("LMGs", "Masks")은 복수형이라 TOKENS 코드(단수, "lmg"/"mask")와
+  // 바로 안 맞는다. 단수로 바꿔서 이미 아는 코드면 그걸 쓴다.
+  function singularizeCacheWord(w) {
+    const lower = String(w || "").trim().toLowerCase();
+    if (TOKENS[lower]) return lower;
+    const stripped = lower.replace(/s$/, "");
+    return TOKENS[stripped] ? stripped : lower;
+  }
+
+  // ProtoTrack.gg 프록시가 주는 일반 텍스트를 파싱한다. 예:
+  //   Date: 2026-09-28
+  //   Missions:
+  //   - The Art Museum: Hana-U Corporation
+  //   Vendor Caches:
+  //   - Weapons: LMGs
+  //   - Gear: Masks
+  //   Last updated: 2026-09-28 10:01
+  function collectDays(text) {
+    const lines = String(text || "").split("\n");
+    let day = null;
+    let lastUpdated = null;
+    const missions = [];
+    const loot = [];
+    const cache = {};
+    let section = null;
+    lines.forEach((raw) => {
+      const line = raw.trim();
+      if (line.startsWith("Date:")) { day = line.slice(5).trim(); return; }
+      if (line === "Missions:") { section = "missions"; return; }
+      if (line === "Vendor Caches:") { section = "caches"; return; }
+      if (line.startsWith("Last updated:")) { lastUpdated = line.slice("Last updated:".length).trim(); section = null; return; }
+      if (!line.startsWith("-")) return;
+      const m = line.match(/^- (.+?): (.+)$/);
+      if (!m) return;
+      if (section === "missions") { missions.push(m[1]); loot.push(m[2]); }
+      else if (section === "caches") cache[m[1].trim()] = m[2].trim();
+    });
+    if (!day || !missions.length) throw new Error("데이터 형식을 읽지 못했습니다. ProtoTrack 쪽 형식이 바뀐 것 같습니다.");
+    const week = { missions };
+    const row = {
+      target_loot: loot,
+      prototype_gear_cache: singularizeCacheWord(cache["Gear"]),
+      prototype_weapon_cache: singularizeCacheWord(cache["Weapons"])
+    };
+    return [{ day, week, row, sourceLastUpdated: lastUpdated }];
   }
 
   // 장소 이름
@@ -960,6 +994,7 @@ const supabase = createClient(
   let selected = -1;
   let lastSig = "";
   let checkedAt = null;
+  let sourceLastUpdated = null;
   let resetAt = nextResetAfter(new Date());
   let pollTimer = null;
   let loading = false;
@@ -1097,6 +1132,7 @@ const supabase = createClient(
 
   function renderTimes() {
     $("fact-checked").textContent = checkedAt ? fmtClock(checkedAt) : "-";
+    $("fact-source-updated").textContent = sourceLastUpdated || "-";
     const left = Math.max(0, resetAt - Date.now());
     const s = Math.floor(left / 1000);
     $("fact-reset-at").textContent = fmtHM(resetAt);
@@ -3079,10 +3115,10 @@ const supabase = createClient(
     btn.textContent = "불러오는 중…";
 
     try {
-      const res = await fetch(JSON_URL, { cache: "no-cache" });
+      const res = await fetch(SOURCE_URL, { cache: "no-cache" });
       if (!res.ok) throw new Error(`서버가 HTTP ${res.status}로 응답했습니다.`);
-      const data = await res.json();
-      const fresh = collectDays(data);
+      const text = await res.text();
+      const fresh = collectDays(text);
 
       const keepDay = selected >= 0 && days[selected] ? days[selected].day : null;
       const wasLatest = selected < 0 || selected === days.length - 1;
@@ -3090,6 +3126,7 @@ const supabase = createClient(
       const keepIdx = keepDay ? days.findIndex((d) => d.day === keepDay) : -1;
       selected = wasLatest || keepIdx < 0 ? days.length - 1 : keepIdx;
       checkedAt = new Date();
+      sourceLastUpdated = days[days.length - 1].sourceLastUpdated || null;
 
       const sig = JSON.stringify(days[days.length - 1].row);
       const changed = sig !== lastSig;
