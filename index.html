@@ -832,6 +832,8 @@ const supabase = createClient(
     const TOKENS = {};
     slots.forEach((s) => { TOKENS[s.code] = [s.name_ko, s.name_en, s.category]; });
     TOKENS["skill mods"] = ["스킬 부속품", "Skill Mods", ""];   // item_slots.category 제약(무기/부위) 때문에 DB 대신 코드에 둠
+    TOKENS["assault rifle"] = ["돌격소총", "Assault Rifle", ""];
+    TOKENS["gear mods"] = ["보호장구 개조부품", "Gear Mods", ""];
 
     const MISSIONS = missionRows.map((m) => ({ en: m.name_en, ko: m.name_ko, alt: m.alt_names }));
 
